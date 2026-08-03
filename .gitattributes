@@ -1,0 +1,14 @@
+# Keep Zig sources with LF line endings.
+*.zig text eol=lf
+build.zig text eol=lf
+build.zig.zon text eol=lf
+
+# Mark committed ROM images as binary.
+fixtures/roms/*.gb binary
+fixtures/blargg/*.gb binary
+
+# Documentation and text files.
+*.md text
+*.txt text
+*.yml text
+*.yaml text

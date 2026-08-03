@@ -1,5 +1,47 @@
 const std = @import("std");
 
+pub const CartridgeHeader = struct {
+    title: [16]u8,
+    cgb_flag: u8,
+    mapper: []const u8,
+    rom_size_kib: u16,
+    ram_size_kib: u16,
+};
+
+// Parses the fixed header block of a ROM image. The emulator does not
+// validate the Nintendo logo or the checksums, so only the fields that
+// the frontend and the --info flag display are read.
+pub fn readHeader(rom: []const u8) CartridgeHeader {
+    var title = [_]u8{0} ** 16;
+    if (rom.len > 0x134 + 16) std.mem.copyForwards(u8, &title, rom[0x134 .. 0x134 + 16]);
+    const cgb_flag: u8 = if (rom.len > 0x143) rom[0x143] else 0;
+    const mapper: []const u8 = if (rom.len > 0x147) switch (rom[0x147]) {
+        0x01, 0x02, 0x03 => "MBC1",
+        else => "ROM only",
+    } else "ROM only";
+    const rom_size_kib: u16 = if (rom.len > 0x148) switch (rom[0x148]) {
+        0 => 32,
+        1 => 64,
+        2 => 128,
+        3 => 256,
+        4 => 512,
+        5 => 1024,
+        6 => 2048,
+        7 => 4096,
+        else => 32,
+    } else 32;
+    const ram_size_kib: u16 = if (rom.len > 0x149) switch (rom[0x149]) {
+        0 => 0,
+        1 => 2,
+        2 => 8,
+        3 => 32,
+        4 => 128,
+        5 => 64,
+        else => 0,
+    } else 0;
+    return .{ .title = title, .cgb_flag = cgb_flag, .mapper = mapper, .rom_size_kib = rom_size_kib, .ram_size_kib = ram_size_kib };
+}
+
 pub const Cartridge = struct {
     allocator: std.mem.Allocator,
     rom: []u8,

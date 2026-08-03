@@ -9,7 +9,10 @@ pub const Bus = struct {
     timer: Timer = .{},
     wram: [0x2000]u8 = [_]u8{0} ** 0x2000,
     hram: [0x7f]u8 = [_]u8{0} ** 0x7f,
-    joypad: u8 = 0xcf,
+    // Low-active buttons: bits 0-3 are the D-pad, bits 4-7 are A, B,
+    // Select, and Start. The upper nibble never participates in reads.
+    joypad: u8 = 0xff,
+    joypad_select: u8 = 0x30,
     sb: u8 = 0,
     sc: u8 = 0,
     iflag: u8 = 0xe1,
@@ -33,7 +36,7 @@ pub const Bus = struct {
         if (address >= 0xfe00 and address < 0xfea0) return self.ppu.read(address);
         if (address >= 0xff80 and address < 0xffff) return self.hram[address - 0xff80];
         return switch (address) {
-            0xff00 => self.joypad,
+            0xff00 => self.readJoypad(),
             0xff01 => self.sb,
             0xff02 => self.sc,
             0xff0f => self.iflag | 0xe0,
@@ -70,7 +73,7 @@ pub const Bus = struct {
             return;
         }
         switch (address) {
-            0xff00 => self.joypad = (self.joypad & 0xcf) | (value & 0x30),
+            0xff00 => self.joypad_select = value & 0x30,
             0xff01 => self.sb = value,
             0xff02 => {
                 self.sc = value;
@@ -106,5 +109,22 @@ pub const Bus = struct {
 
     pub fn serialOutput(self: *const Bus) []const u8 {
         return self.serial[0..self.serial_len];
+    }
+
+    // Returns the joypad with column selection applied. Writing $10 to
+    // $FF00 selects the D-pad, writing $20 selects the buttons. The
+    // unselected column reads high, so a released button is 1.
+    fn readJoypad(self: *const Bus) u8 {
+        var result: u8 = 0xff;
+        if ((self.joypad_select & 0x10) == 0) result &= (self.joypad & 0x0f) | 0xf0;
+        if ((self.joypad_select & 0x20) == 0) result &= ((self.joypad >> 4) & 0x0f) | 0xf0;
+        return result;
+    }
+
+    // Sets the low-active button state. Bits 0-3 are the D-pad
+    // (right, left, up, down); bits 4-7 are A, B, Select, and Start.
+    // A pressed button is 0.
+    pub fn setButtons(self: *Bus, value: u8) void {
+        self.joypad = value;
     }
 };

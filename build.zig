@@ -57,22 +57,22 @@ pub fn build(b: *std.Build) void {
     };
 
     if (build_windowed) {
-    var sdl_prefix: ?[]const u8 = null;
-    if (sdl2_opt) |value| {
-        if (value.len != 0 and !std.mem.eql(u8, value, "off")) sdl_prefix = value;
-    } else {
-        if (b.graph.environ_map.get("SDL2_DIR")) |dir| {
-            if (dir.len != 0) sdl_prefix = dir;
-        }
-        if (sdl_prefix == null and target.result.os.tag == .windows) {
+        var sdl_prefix: ?[]const u8 = null;
+        if (sdl2_opt) |value| {
+            if (value.len != 0 and !std.mem.eql(u8, value, "off")) sdl_prefix = value;
+        } else {
+            if (b.graph.environ_map.get("SDL2_DIR")) |dir| {
+                if (dir.len != 0) sdl_prefix = dir;
+            }
+            if (sdl_prefix == null and target.result.os.tag == .windows) {
                 for (sdl_prefix_candidates) |candidate| {
                     if (sdl2PrefixFound(b, candidate)) {
                         sdl_prefix = candidate;
                         break;
                     }
                 }
+            }
         }
-    }
 
         if (sdl_prefix != null or target.result.os.tag != .windows) {
             const exe = b.addExecutable(.{
@@ -84,9 +84,19 @@ pub fn build(b: *std.Build) void {
                     .link_libc = true,
                 }),
             });
-            exe.root_module.linkSystemLibrary("SDL2", .{});
             if (target.result.os.tag == .windows) {
                 for (sdl_deps) |lib| exe.root_module.linkSystemLibrary(lib, .{});
+                if (sdl_prefix) |prefix| {
+                    // On Windows the SDL2 prefix ships a DLL and its
+                    // import library. Link the import library directly so
+                    // that the static libSDL2.a CRT symbols are not pulled
+                    // in by lld.
+                    exe.root_module.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib", "libSDL2.dll.a" }) });
+                } else {
+                    exe.root_module.linkSystemLibrary("SDL2", .{ .preferred_link_mode = .dynamic });
+                }
+            } else {
+                exe.root_module.linkSystemLibrary("SDL2", .{});
             }
             if (sdl_prefix) |prefix| {
                 exe.root_module.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
@@ -132,12 +142,25 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_asm_tests.step);
 
     const fixtures_step = b.step("fixtures", "Regenerate bundled test ROMs from their assembly sources");
-    {
-        const run = b.addRunArtifact(gbasm);
-        run.addDirectoryArg(b.path("fixtures/asm"));
-        run.addDirectoryArg(b.path("fixtures/roms"));
-        fixtures_step.dependOn(&run.step);
-    }
+    const fixtures_run = b.addRunArtifact(gbasm);
+    fixtures_run.addDirectoryArg(b.path("fixtures/asm"));
+    fixtures_run.addDirectoryArg(b.path("fixtures/roms"));
+    fixtures_step.dependOn(&fixtures_run.step);
+
+    const integration_options = b.addOptions();
+    integration_options.addOption([]const u8, "fixture_dir", b.path("fixtures/roms").getPath(b));
+
+    const integration_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/integration.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    integration_tests.root_module.addOptions("options", integration_options);
+    const run_integration_tests = b.addRunArtifact(integration_tests);
+    run_integration_tests.step.dependOn(&fixtures_run.step);
+    test_step.dependOn(&run_integration_tests.step);
 
     const blargg_step = b.step("test-blargg", "Run the blargg cpu_instrs ROMs in headless mode and check their serial output");
     {

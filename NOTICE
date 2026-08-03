@@ -1,0 +1,17 @@
+Dot Matrix Deck
+
+This product includes software developed for SDL2.
+
+The windowed frontend links against SDL2. SDL2 is available under the
+zlib license. See https://www.libsdl.org for details.
+
+The windowed frontend is optional. The headless runner, the assembler,
+and the tests do not require SDL2.
+
+Third-party test ROMs
+
+The blargg cpu_instrs suite is a set of public test ROMs for the Game Boy
+CPU. The ROMs are not committed to this repository. The suite was written
+by blargg and is distributed by the gb-test-roms project by retrio.
+
+Source: https://github.com/retrio/gb-test-roms
