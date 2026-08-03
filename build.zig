@@ -57,22 +57,22 @@ pub fn build(b: *std.Build) void {
     };
 
     if (build_windowed) {
-    var sdl_prefix: ?[]const u8 = null;
-    if (sdl2_opt) |value| {
-        if (value.len != 0 and !std.mem.eql(u8, value, "off")) sdl_prefix = value;
-    } else {
-        if (b.graph.environ_map.get("SDL2_DIR")) |dir| {
-            if (dir.len != 0) sdl_prefix = dir;
-        }
-        if (sdl_prefix == null and target.result.os.tag == .windows) {
+        var sdl_prefix: ?[]const u8 = null;
+        if (sdl2_opt) |value| {
+            if (value.len != 0 and !std.mem.eql(u8, value, "off")) sdl_prefix = value;
+        } else {
+            if (b.graph.environ_map.get("SDL2_DIR")) |dir| {
+                if (dir.len != 0) sdl_prefix = dir;
+            }
+            if (sdl_prefix == null and target.result.os.tag == .windows) {
                 for (sdl_prefix_candidates) |candidate| {
                     if (sdl2PrefixFound(b, candidate)) {
                         sdl_prefix = candidate;
                         break;
                     }
                 }
+            }
         }
-    }
 
         if (sdl_prefix != null or target.result.os.tag != .windows) {
             const exe = b.addExecutable(.{
@@ -84,16 +84,26 @@ pub fn build(b: *std.Build) void {
                     .link_libc = true,
                 }),
             });
-            exe.root_module.linkSystemLibrary("SDL2", .{});
             if (target.result.os.tag == .windows) {
+                // Link the SDL2.dll import library when an SDL2 prefix is
+                // known. The msys2 static archive expects the mingw CRT,
+                // which Zig's UCRT build cannot satisfy. The DLL keeps the
+                // windowed frontend self-contained next to the executable.
+                if (sdl_prefix) |prefix| {
+                    exe.root_module.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib", "libSDL2.dll.a" }) });
+                } else {
+                    exe.root_module.linkSystemLibrary("SDL2", .{});
+                }
                 for (sdl_deps) |lib| exe.root_module.linkSystemLibrary(lib, .{});
+            } else {
+                exe.root_module.linkSystemLibrary("SDL2", .{});
             }
             if (sdl_prefix) |prefix| {
                 exe.root_module.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
                 exe.root_module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib" }) });
                 const dll_path = b.pathJoin(&.{ prefix, "bin", "SDL2.dll" });
                 if (sdl2PrefixFound(b, prefix)) {
-                    const install_dll = b.addInstallBinFile(.{ .cwd_relative = dll_path }, "bin/SDL2.dll");
+                    const install_dll = b.addInstallBinFile(.{ .cwd_relative = dll_path }, "SDL2.dll");
                     b.getInstallStep().dependOn(&install_dll.step);
                 }
             }
@@ -130,6 +140,23 @@ pub fn build(b: *std.Build) void {
     });
     const run_asm_tests = b.addRunArtifact(asm_tests);
     test_step.dependOn(&run_asm_tests.step);
+
+    const integration_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/integration.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "gbasm", .module = b.createModule(.{
+                    .root_source_file = b.path("tools/gbasm.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                }) },
+            },
+        }),
+    });
+    const run_integration_tests = b.addRunArtifact(integration_tests);
+    test_step.dependOn(&run_integration_tests.step);
 
     const fixtures_step = b.step("fixtures", "Regenerate bundled test ROMs from their assembly sources");
     {

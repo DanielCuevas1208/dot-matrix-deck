@@ -10,9 +10,12 @@
         "tools",
         "fixtures",
         "README.md",
+        "ROADMAP.md",
+        "CONTRIBUTING.md",
         "LICENSE",
         "NOTICE",
         ".github",
         ".gitignore",
+        ".gitattributes",
     },
 }

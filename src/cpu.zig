@@ -155,7 +155,7 @@ pub const Cpu = struct {
             0xee => self.xorImmediate(bus),
             0xef => self.rst(bus, 0x28),
             0xf0 => self.highRead(bus),
-            0xf1 => self.popPair(bus, 3),
+            0xf1 => self.popAf(bus),
             0xf2 => self.highReadC(bus),
             0xf3 => self.disableInterrupts(),
             0xf5 => self.pushPair(bus, self.af()),
@@ -273,9 +273,18 @@ pub const Cpu = struct {
 
     fn setPair(self: *Cpu, pair_index: u2, value: u16) void {
         switch (pair_index) {
-            0 => { self.b = @truncate(value >> 8); self.c = @truncate(value); },
-            1 => { self.d = @truncate(value >> 8); self.e = @truncate(value); },
-            2 => { self.h = @truncate(value >> 8); self.l = @truncate(value); },
+            0 => {
+                self.b = @truncate(value >> 8);
+                self.c = @truncate(value);
+            },
+            1 => {
+                self.d = @truncate(value >> 8);
+                self.e = @truncate(value);
+            },
+            2 => {
+                self.h = @truncate(value >> 8);
+                self.l = @truncate(value);
+            },
             else => self.sp = value,
         }
     }
@@ -485,7 +494,13 @@ pub const Cpu = struct {
 
     fn popPair(self: *Cpu, bus: *Bus, pair_index: u2) u16 {
         self.setPair(pair_index, self.pop(bus));
-        if (pair_index == 3) self.f &= 0xf0;
+        return 12;
+    }
+
+    fn popAf(self: *Cpu, bus: *Bus) u16 {
+        const value = self.pop(bus);
+        self.a = @truncate(value >> 8);
+        self.f = @as(u8, @truncate(value)) & 0xf0;
         return 12;
     }
 
@@ -681,3 +696,96 @@ pub const Cpu = struct {
         return @as(u16, self.a) << 8 | self.f;
     }
 };
+
+const std = @import("std");
+
+const TestCpu = struct {
+    cpu: Cpu,
+    bus: @import("bus.zig").Bus,
+
+    fn init(allocator: std.mem.Allocator, bytes: []const u8) !TestCpu {
+        var rom: [0x8000]u8 = [_]u8{0} ** 0x8000;
+        const start = 0x0100;
+        @memcpy(rom[start .. start + bytes.len], bytes);
+        const bus = try @import("bus.zig").Bus.init(allocator, &rom);
+        return .{ .cpu = .{}, .bus = bus };
+    }
+
+    fn deinit(self: *TestCpu) void {
+        self.bus.deinit();
+    }
+
+    fn stepN(self: *TestCpu, count: usize) void {
+        var i: usize = 0;
+        while (i < count) : (i += 1) _ = self.cpu.step(&self.bus);
+    }
+};
+
+test "POP AF restores A and F and does not touch SP" {
+    const allocator = std.testing.allocator;
+    var tc = try TestCpu.init(allocator, &.{
+        0x31, 0x00, 0xdf, // LD SP,$DF00
+        0x01, 0x34, 0x12, // LD BC,$1234
+        0xc5, // PUSH BC
+        0xf1, // POP AF
+    });
+    defer tc.deinit();
+    tc.stepN(4);
+    try std.testing.expectEqual(@as(u8, 0x12), tc.cpu.a);
+    try std.testing.expectEqual(@as(u8, 0x30), tc.cpu.f);
+    try std.testing.expectEqual(@as(u16, 0xdf00), tc.cpu.sp);
+}
+
+test "PUSH AF and POP AF round trip A and F" {
+    const allocator = std.testing.allocator;
+    var tc = try TestCpu.init(allocator, &.{
+        0x31, 0x00, 0xdf, // LD SP,$DF00
+        0x3e, 0xab, // LD A,$AB
+        0xf5, // PUSH AF
+        0x3e, 0x00, // LD A,$00
+        0xf1, // POP AF
+    });
+    defer tc.deinit();
+    tc.stepN(5);
+    try std.testing.expectEqual(@as(u8, 0xab), tc.cpu.a);
+    try std.testing.expectEqual(@as(u16, 0xdf00), tc.cpu.sp);
+}
+
+test "SP pair operations for LD, INC, and DEC SP" {
+    const allocator = std.testing.allocator;
+    var tc = try TestCpu.init(allocator, &.{
+        0x31, 0x34, 0x12, // LD SP,$1234
+        0x33, // INC SP
+        0x3b, // DEC SP
+        0x3b, // DEC SP
+    });
+    defer tc.deinit();
+    tc.stepN(4);
+    try std.testing.expectEqual(@as(u16, 0x1233), tc.cpu.sp);
+}
+
+test "ADD HL,SP computes half and full carry flags" {
+    const allocator = std.testing.allocator;
+    var tc = try TestCpu.init(allocator, &.{
+        0x31, 0xf0, 0x0f, // LD SP,$0FF0
+        0x21, 0x10, 0x00, // LD HL,$0010
+        0x39, // ADD HL,SP
+    });
+    defer tc.deinit();
+    tc.stepN(3);
+    try std.testing.expectEqual(@as(u16, 0x1000), tc.cpu.hl());
+    try std.testing.expectEqual(@as(u8, 0x20), tc.cpu.f & 0x30);
+}
+
+test "DAA adds decimal correction to A" {
+    const allocator = std.testing.allocator;
+    var tc = try TestCpu.init(allocator, &.{
+        0xaf, // XOR A (clears carry)
+        0x3e, 0x0a, // LD A,$0A
+        0x27, // DAA
+    });
+    defer tc.deinit();
+    tc.stepN(3);
+    try std.testing.expectEqual(@as(u8, 0x10), tc.cpu.a);
+    try std.testing.expectEqual(@as(u8, 0x00), tc.cpu.f & 0x10);
+}

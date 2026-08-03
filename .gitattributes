@@ -1,0 +1,8 @@
+# Normalise line endings so that regenerated fixtures diff cleanly on
+# every platform. Binary images must never be touched by line-ending rules.
+* text=auto eol=lf
+
+*.gb binary
+*.ppm binary
+*.png binary
+*.sav binary

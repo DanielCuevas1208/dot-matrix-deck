@@ -7,6 +7,11 @@ zig-out/
 *.dylib
 *.exe
 .DS_Store
-*.gb
 *.sav
 *.swp
+
+# Generated ROM images are ignored by default, but the bundled test
+# fixtures are committed so that CI can run the ROM suites.
+*.gb
+!fixtures/roms/*.gb
+!fixtures/blargg/*.gb
