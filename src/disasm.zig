@@ -13,6 +13,7 @@ pub const Instruction = struct {
 
 const r8_names = [_][]const u8{ "B", "C", "D", "E", "H", "L", "(HL)", "A" };
 const r16_names = [_][]const u8{ "BC", "DE", "HL", "SP" };
+const stack_pair_names = [_][]const u8{ "BC", "DE", "HL", "AF" };
 
 fn r8(index: u8) []const u8 {
     return r8_names[index & 7];
@@ -102,11 +103,11 @@ const Writer = struct {
     }
 
     fn putPOP(self: *Writer, index: u8) void {
-        self.putFmt("POP {s}", .{r16_names[index & 3]});
+        self.putFmt("POP {s}", .{stack_pair_names[index & 3]});
     }
 
     fn putPUSH(self: *Writer, index: u8) void {
-        self.putFmt("PUSH {s}", .{r16_names[index & 3]});
+        self.putFmt("PUSH {s}", .{stack_pair_names[index & 3]});
     }
 
     fn putJPC(self: *Writer, flag: []const u8, hi: u8, lo: u8) void {
@@ -140,7 +141,7 @@ const Writer = struct {
     }
 
     fn putLDIMM8(self: *Writer, address: u16, reg: []const u8) void {
-        self.putFmt("LDH (${X:0>2}),{s}", .{address & 0xff, reg});
+        self.putFmt("LDH (${X:0>2}),{s}", .{ address & 0xff, reg });
     }
 
     fn putLDA16(self: *Writer, hi: u8, lo: u8) void {
@@ -381,22 +382,22 @@ fn instructionLen(opcode: u8) usize {
 
 fn cyclesOf(opcode: u8) u8 {
     const table = [_]u8{
-        4, 12, 8, 8, 4, 4, 8, 4, 20, 8, 8, 8, 4, 4, 8, 4,
-        4, 12, 8, 8, 4, 4, 8, 4, 12, 8, 8, 8, 4, 4, 8, 4,
-        8, 12, 8, 8, 4, 4, 8, 4, 12, 8, 8, 8, 4, 4, 8, 4,
-        8, 12, 8, 8, 12, 12, 12, 4, 12, 8, 8, 8, 4, 4, 8, 4,
-        4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
-        4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
-        8, 8, 8, 8, 8, 8, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4,
-        8, 8, 8, 8, 8, 8, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4,
-        8, 12, 12, 16, 12, 16, 8, 16, 8, 16, 12, 16, 12, 24, 8, 16,
-        8, 12, 12, 16, 12, 16, 8, 16, 8, 16, 12, 16, 12, 24, 8, 16,
-        8, 12, 12, 16, 12, 16, 8, 16, 8, 16, 12, 16, 12, 24, 8, 16,
-        8, 12, 12, 16, 12, 16, 8, 16, 8, 16, 12, 16, 12, 24, 8, 16,
-        12, 12, 8, 4, 16, 16, 8, 16, 20, 16, 16, 4, 16, 24, 8, 16,
-        12, 12, 8, 4, 16, 16, 8, 16, 20, 16, 16, 4, 16, 24, 8, 16,
-        12, 12, 8, 4, 16, 16, 20, 16, 8, 16, 16, 4, 16, 24, 8, 16,
-        12, 12, 8, 4, 16, 16, 4, 16, 8, 16, 16, 4, 16, 24, 8, 16,
+        4,  12, 8,  8,  4,  4,  8,  4,  20, 8,  8,  8,  4,  4,  8, 4,
+        4,  12, 8,  8,  4,  4,  8,  4,  12, 8,  8,  8,  4,  4,  8, 4,
+        8,  12, 8,  8,  4,  4,  8,  4,  12, 8,  8,  8,  4,  4,  8, 4,
+        8,  12, 8,  8,  12, 12, 12, 4,  12, 8,  8,  8,  4,  4,  8, 4,
+        4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8, 4,
+        4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8, 4,
+        8,  8,  8,  8,  8,  8,  4,  8,  4,  4,  4,  4,  4,  4,  8, 4,
+        8,  8,  8,  8,  8,  8,  4,  8,  4,  4,  4,  4,  4,  4,  8, 4,
+        8,  12, 12, 16, 12, 16, 8,  16, 8,  16, 12, 16, 12, 24, 8, 16,
+        8,  12, 12, 16, 12, 16, 8,  16, 8,  16, 12, 16, 12, 24, 8, 16,
+        8,  12, 12, 16, 12, 16, 8,  16, 8,  16, 12, 16, 12, 24, 8, 16,
+        8,  12, 12, 16, 12, 16, 8,  16, 8,  16, 12, 16, 12, 24, 8, 16,
+        12, 12, 8,  4,  16, 16, 8,  16, 20, 16, 16, 4,  16, 24, 8, 16,
+        12, 12, 8,  4,  16, 16, 8,  16, 20, 16, 16, 4,  16, 24, 8, 16,
+        12, 12, 8,  4,  16, 16, 20, 16, 8,  16, 16, 4,  16, 24, 8, 16,
+        12, 12, 8,  4,  16, 16, 4,  16, 8,  16, 16, 4,  16, 24, 8, 16,
     };
     return table[opcode];
 }
@@ -419,14 +420,29 @@ test "disassembler formats representative instructions" {
 
     const a = formatAt(&bus, 0x0100);
     try std.testing.expectEqual(@as(usize, 3), a.len);
-    try std.testing.expectEqualStrings("LD HL,$1234", std.mem.trimRight(u8, &a.text, "\x00"));
+    try std.testing.expectEqualStrings("LD HL,$1234", std.mem.trimEnd(u8, &a.text, "\x00"));
 
     const b = formatAt(&bus, 0x0103);
-    try std.testing.expectEqualStrings("LD A,$AA", std.mem.trimRight(u8, &b.text, "\x00"));
+    try std.testing.expectEqualStrings("LD A,$AA", std.mem.trimEnd(u8, &b.text, "\x00"));
 
     const c = formatAt(&bus, 0x0105);
-    try std.testing.expectEqualStrings("RLC C", std.mem.trimRight(u8, &c.text, "\x00"));
+    try std.testing.expectEqualStrings("RLC C", std.mem.trimEnd(u8, &c.text, "\x00"));
 
     const d = formatAt(&bus, 0x0107);
-    try std.testing.expectEqualStrings("JP $1000", std.mem.trimRight(u8, &d.text, "\x00"));
+    try std.testing.expectEqualStrings("JP $1000", std.mem.trimEnd(u8, &d.text, "\x00"));
+}
+
+test "disassembler labels PUSH and POP AF correctly" {
+    const allocator = std.testing.allocator;
+    var rom = [_]u8{0} ** 0x8000;
+    rom[0x0100] = 0xf5;
+    rom[0x0101] = 0xf1;
+    var bus = try Bus.init(allocator, &rom);
+    defer bus.deinit();
+
+    const push = formatAt(&bus, 0x0100);
+    try std.testing.expectEqualStrings("PUSH AF", std.mem.trimEnd(u8, &push.text, "\x00"));
+
+    const pop = formatAt(&bus, 0x0101);
+    try std.testing.expectEqualStrings("POP AF", std.mem.trimEnd(u8, &pop.text, "\x00"));
 }

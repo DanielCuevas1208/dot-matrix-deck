@@ -2,29 +2,77 @@ const std = @import("std");
 const Emulator = @import("emulator.zig").Emulator;
 const serial = @import("serial.zig");
 const disasm = @import("disasm.zig");
+const ppu = @import("ppu.zig");
+const cartridge = @import("cartridge.zig");
 
 const default_max_cycles: u64 = 2_000_000_000;
+
+const Expect = enum { pass, fail, any };
 
 const Options = struct {
     rom_path: ?[]const u8 = null,
     blargg_suite: ?[]const u8 = null,
     max_cycles: u64 = default_max_cycles,
     trace: bool = false,
-    expect: ?serial.Verdict = null,
+    expect: ?Expect = null,
     timeout_ms: u64 = 120_000,
+    frame_dump: ?[]const u8 = null,
+    frame_count: u64 = 1,
+    info: bool = false,
 };
+
+// FNV-1a over the raw frame bytes. The value proves that the pixel
+// pipeline is deterministic across builds and platforms.
+fn frameChecksum(frame: []const u32) u32 {
+    var hash: u32 = 0x811c9dc5;
+    for (frame) |pixel| {
+        const bytes = [4]u8{
+            @truncate(pixel),
+            @truncate(pixel >> 8),
+            @truncate(pixel >> 16),
+            @truncate(pixel >> 24),
+        };
+        for (bytes) |byte| {
+            hash ^= byte;
+            hash *%= 0x01000193;
+        }
+    }
+    return hash;
+}
+
+fn writePpm(io: std.Io, path: []const u8, frame: []const u32) !void {
+    const dir = std.Io.Dir.cwd();
+    const file = try dir.createFile(io, path, .{ .truncate = true });
+    defer file.close(io);
+
+    const header = try std.fmt.allocPrint(std.heap.page_allocator, "P6\n{d} {d}\n255\n", .{ ppu.ScreenWidth, ppu.ScreenHeight });
+    defer std.heap.page_allocator.free(header);
+    try file.writePositionalAll(io, header, 0);
+
+    var pixels: [ppu.ScreenWidth * ppu.ScreenHeight * 3]u8 = undefined;
+    for (frame, 0..) |pixel, index| {
+        pixels[index * 3] = @truncate(pixel >> 16);
+        pixels[index * 3 + 1] = @truncate(pixel >> 8);
+        pixels[index * 3 + 2] = @truncate(pixel);
+    }
+    try file.writePositionalAll(io, &pixels, header.len);
+}
 
 fn usage(program: []const u8) void {
     std.debug.print(
         \\Dot Matrix Deck - headless runner
         \\Usage:
         \\  {s} <rom.gb> [--max-cycles N] [--trace] [--expect pass|fail|any]
+        \\  {s} <rom.gb> --dump-frame <out.ppm> [--frames N]
+        \\  {s} <rom.gb> --info
         \\  {s} --blargg-suite <directory>
         \\
         \\Runs a ROM without a window, prints its serial output, and sets the
-        \\exit code from the test verdict.
+        \\exit code from the test verdict. --dump-frame writes the rendered
+        \\pixel buffer to a PPM file and prints a deterministic checksum.
+        \\--info prints the cartridge header and exits.
         \\
-    , .{ program, program });
+    , .{ program, program, program, program });
 }
 
 fn readFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
@@ -81,8 +129,25 @@ fn runRom(io: std.Io, allocator: std.mem.Allocator, options: Options) !u8 {
     const rom = try readFile(io, allocator, options.rom_path.?);
     defer allocator.free(rom);
 
+    if (options.info) {
+        var buffer: [512]u8 = undefined;
+        std.debug.print("{s}", .{cartridge.formatHeader(cartridge.readHeader(rom), &buffer)});
+        return 0;
+    }
+
     var emulator = try Emulator.init(allocator, rom);
     defer emulator.deinit();
+
+    if (options.frame_dump) |path| {
+        var frame_index: u64 = 0;
+        while (frame_index < options.frame_count) : (frame_index += 1) {
+            emulator.runFrame(1_000_000);
+        }
+        const frame = &emulator.bus.ppu.frame;
+        try writePpm(io, path, frame);
+        std.debug.print("Frame checksum: {X:0>8}\n", .{frameChecksum(frame)});
+        return 0;
+    }
 
     var runner = Runner{
         .emulator = &emulator,
@@ -100,8 +165,11 @@ fn runRom(io: std.Io, allocator: std.mem.Allocator, options: Options) !u8 {
         std.debug.print("Serial output:\n{s}\n", .{printable});
     }
 
-    const wanted = options.expect orelse verdict;
-    const ok = wanted == verdict;
+    const ok: bool = if (options.expect) |expected| switch (expected) {
+        Expect.pass => verdict == serial.Verdict.pass,
+        Expect.fail => verdict == serial.Verdict.fail,
+        Expect.any => true,
+    } else verdict == serial.Verdict.pass;
     std.debug.print("Verdict: {s}\n", .{@tagName(verdict)});
     return if (ok) 0 else 1;
 }
@@ -191,7 +259,7 @@ pub fn main(init: std.process.Init) !void {
             } else if (std.mem.eql(u8, argv[index], "fail")) {
                 options.expect = .fail;
             } else if (std.mem.eql(u8, argv[index], "any")) {
-                options.expect = .pass;
+                options.expect = .any;
             } else {
                 std.debug.print("bad --expect value: {s}\n", .{argv[index]});
                 std.process.exit(2);
@@ -203,6 +271,25 @@ pub fn main(init: std.process.Init) !void {
                 std.process.exit(2);
             }
             options.blargg_suite = argv[index];
+        } else if (std.mem.eql(u8, arg, "--dump-frame")) {
+            index += 1;
+            if (index >= argv.len) {
+                std.debug.print("--dump-frame needs a path\n", .{});
+                std.process.exit(2);
+            }
+            options.frame_dump = argv[index];
+        } else if (std.mem.eql(u8, arg, "--frames")) {
+            index += 1;
+            if (index >= argv.len) {
+                std.debug.print("--frames needs a count\n", .{});
+                std.process.exit(2);
+            }
+            options.frame_count = std.fmt.parseInt(u64, argv[index], 10) catch {
+                std.debug.print("bad frame count: {s}\n", .{argv[index]});
+                std.process.exit(2);
+            };
+        } else if (std.mem.eql(u8, arg, "--info")) {
+            options.info = true;
         } else if (options.rom_path == null) {
             options.rom_path = arg;
         } else {

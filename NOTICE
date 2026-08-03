@@ -1,0 +1,15 @@
+# Notice
+
+This file lists third-party content distributed with Dot Matrix Deck.
+
+## blargg CPU instruction tests
+
+The directory `fixtures/blargg` contains the `cpu_instrs` test ROMs.
+Shay Green wrote these ROMs.
+The ROMs verify the instruction set of the CPU.
+They are used as read-only test fixtures.
+See the blargg test collection at:
+https://github.com/retrio/gb-test-roms
+
+The ROMs are included for test purposes only.
+Dot Matrix Deck does not claim ownership of these files.

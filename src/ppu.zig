@@ -174,3 +174,25 @@ pub const Ppu = struct {
         }
     }
 };
+
+const std = @import("std");
+const testing = std.testing;
+
+test "PPU raises VBlank once per frame at 70224 cycles" {
+    var ppu = Ppu{};
+    var iflag: u8 = 0;
+    var line: usize = 0;
+    while (line < 143) : (line += 1) ppu.tick(456, &iflag);
+    try testing.expectEqual(false, ppu.takeFrame());
+    ppu.tick(456, &iflag);
+    try testing.expectEqual(true, ppu.takeFrame());
+    try testing.expectEqual(@as(u8, 0x01), iflag & 0x01);
+}
+
+test "PPU line counter wraps to 0 after line 153" {
+    var ppu = Ppu{};
+    var iflag: u8 = 0;
+    var line: usize = 0;
+    while (line < 154) : (line += 1) ppu.tick(456, &iflag);
+    try testing.expectEqual(@as(u8, 0), ppu.ly);
+}

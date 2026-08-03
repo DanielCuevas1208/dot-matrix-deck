@@ -1,0 +1,75 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Format check
+        run: zig fmt --check .
+      - name: Unit and integration tests
+        run: zig build test --summary all
+      - name: Regenerate bundled ROMs
+        run: zig build fixtures
+      - name: Bundled ROMs match their sources
+        run: git diff --exit-code -- fixtures
+      - name: CPU instruction suite (blargg)
+        run: zig build test-blargg
+      - name: Build headless tools
+        run: zig build -Dsdl2=off
+
+  test-windows:
+    name: Test (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Format check
+        shell: pwsh
+        run: zig fmt --check .
+      - name: Unit and integration tests
+        shell: pwsh
+        run: zig build test --summary all
+      - name: Regenerate bundled ROMs
+        shell: pwsh
+        run: zig build fixtures
+      - name: Bundled ROMs match their sources
+        shell: pwsh
+        run: git diff --exit-code -- fixtures
+      - name: CPU instruction suite (blargg)
+        shell: pwsh
+        run: zig build test-blargg
+      - name: Build headless tools
+        shell: pwsh
+        run: zig build -Dsdl2=off
+
+  windowed:
+    name: Windowed frontend (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Install SDL2
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+      - name: Build windowed frontend
+        run: zig build
