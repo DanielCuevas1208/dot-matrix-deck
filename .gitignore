@@ -7,6 +7,10 @@ zig-out/
 *.dylib
 *.exe
 .DS_Store
-*.gb
 *.sav
 *.swp
+
+# Committed fixtures stay tracked even though raw ROMs are ignored.
+*.gb
+!fixtures/roms/*.gb
+!fixtures/blargg/*.gb

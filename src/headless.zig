@@ -2,6 +2,7 @@ const std = @import("std");
 const Emulator = @import("emulator.zig").Emulator;
 const serial = @import("serial.zig");
 const disasm = @import("disasm.zig");
+const cartridge = @import("cartridge.zig");
 
 const default_max_cycles: u64 = 2_000_000_000;
 
@@ -10,6 +11,7 @@ const Options = struct {
     blargg_suite: ?[]const u8 = null,
     max_cycles: u64 = default_max_cycles,
     trace: bool = false,
+    info: bool = false,
     expect: ?serial.Verdict = null,
     timeout_ms: u64 = 120_000,
 };
@@ -18,7 +20,7 @@ fn usage(program: []const u8) void {
     std.debug.print(
         \\Dot Matrix Deck - headless runner
         \\Usage:
-        \\  {s} <rom.gb> [--max-cycles N] [--trace] [--expect pass|fail|any]
+        \\  {s} <rom.gb> [--max-cycles N] [--trace] [--info] [--expect pass|fail|any]
         \\  {s} --blargg-suite <directory>
         \\
         \\Runs a ROM without a window, prints its serial output, and sets the
@@ -80,6 +82,13 @@ const Runner = struct {
 fn runRom(io: std.Io, allocator: std.mem.Allocator, options: Options) !u8 {
     const rom = try readFile(io, allocator, options.rom_path.?);
     defer allocator.free(rom);
+
+    if (options.info) {
+        var buffer: [256]u8 = undefined;
+        const text = cartridge.formatHeader(cartridge.readHeader(rom), &buffer);
+        std.debug.print("{s}\n", .{text});
+        return 0;
+    }
 
     var emulator = try Emulator.init(allocator, rom);
     defer emulator.deinit();
@@ -170,6 +179,8 @@ pub fn main(init: std.process.Init) !void {
         const arg = argv[index];
         if (std.mem.eql(u8, arg, "--trace")) {
             options.trace = true;
+        } else if (std.mem.eql(u8, arg, "--info")) {
+            options.info = true;
         } else if (std.mem.eql(u8, arg, "--max-cycles")) {
             index += 1;
             if (index >= argv.len) {

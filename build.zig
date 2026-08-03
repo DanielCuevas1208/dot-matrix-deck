@@ -57,22 +57,22 @@ pub fn build(b: *std.Build) void {
     };
 
     if (build_windowed) {
-    var sdl_prefix: ?[]const u8 = null;
-    if (sdl2_opt) |value| {
-        if (value.len != 0 and !std.mem.eql(u8, value, "off")) sdl_prefix = value;
-    } else {
-        if (b.graph.environ_map.get("SDL2_DIR")) |dir| {
-            if (dir.len != 0) sdl_prefix = dir;
-        }
-        if (sdl_prefix == null and target.result.os.tag == .windows) {
+        var sdl_prefix: ?[]const u8 = null;
+        if (sdl2_opt) |value| {
+            if (value.len != 0 and !std.mem.eql(u8, value, "off")) sdl_prefix = value;
+        } else {
+            if (b.graph.environ_map.get("SDL2_DIR")) |dir| {
+                if (dir.len != 0) sdl_prefix = dir;
+            }
+            if (sdl_prefix == null and target.result.os.tag == .windows) {
                 for (sdl_prefix_candidates) |candidate| {
                     if (sdl2PrefixFound(b, candidate)) {
                         sdl_prefix = candidate;
                         break;
                     }
                 }
+            }
         }
-    }
 
         if (sdl_prefix != null or target.result.os.tag != .windows) {
             const exe = b.addExecutable(.{
@@ -84,10 +84,6 @@ pub fn build(b: *std.Build) void {
                     .link_libc = true,
                 }),
             });
-            exe.root_module.linkSystemLibrary("SDL2", .{});
-            if (target.result.os.tag == .windows) {
-                for (sdl_deps) |lib| exe.root_module.linkSystemLibrary(lib, .{});
-            }
             if (sdl_prefix) |prefix| {
                 exe.root_module.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
                 exe.root_module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib" }) });
@@ -96,6 +92,19 @@ pub fn build(b: *std.Build) void {
                     const install_dll = b.addInstallBinFile(.{ .cwd_relative = dll_path }, "bin/SDL2.dll");
                     b.getInstallStep().dependOn(&install_dll.step);
                 }
+            }
+            if (target.result.os.tag == .windows) {
+                // Windows links the DLL import library directly. The mingw
+                // auto-import library references fseeko64 and ftello64 in a
+                // form that the Zig linker cannot resolve.
+                if (sdl_prefix) |prefix| {
+                    exe.root_module.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib", "libSDL2.dll.a" }) });
+                } else {
+                    exe.root_module.linkSystemLibrary("SDL2", .{});
+                }
+                for (sdl_deps) |lib| exe.root_module.linkSystemLibrary(lib, .{});
+            } else {
+                exe.root_module.linkSystemLibrary("SDL2", .{});
             }
             b.installArtifact(exe);
 
@@ -118,8 +127,15 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_core_tests = b.addRunArtifact(core_tests);
-    const test_step = b.step("test", "Run deterministic unit tests and bundled ROM tests");
-    test_step.dependOn(&run_core_tests.step);
+
+    const disasm_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/disasm.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_disasm_tests = b.addRunArtifact(disasm_tests);
 
     const asm_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -129,7 +145,28 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_asm_tests = b.addRunArtifact(asm_tests);
+
+    const gbasm_module = b.createModule(.{
+        .root_source_file = b.path("tools/gbasm.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const integration_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/integration.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "gbasm", .module = gbasm_module }},
+        }),
+    });
+    const run_integration_tests = b.addRunArtifact(integration_tests);
+
+    const test_step = b.step("test", "Run deterministic unit tests and bundled ROM tests");
+    test_step.dependOn(&run_core_tests.step);
+    test_step.dependOn(&run_disasm_tests.step);
     test_step.dependOn(&run_asm_tests.step);
+    test_step.dependOn(&run_integration_tests.step);
 
     const fixtures_step = b.step("fixtures", "Regenerate bundled test ROMs from their assembly sources");
     {

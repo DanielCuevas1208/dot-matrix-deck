@@ -1,0 +1,20 @@
+Dot Matrix Deck
+
+Third-party test ROMs
+
+The CPU instruction suite in fixtures/blargg is a set of public test ROMs
+for the Game Boy CPU. The files are reproduced from the gb-test-roms
+project by retrio. The original test suite was written by blargg.
+
+The suite verifies the SM83 CPU against known-good behavior. Each ROM
+prints a pass or fail verdict through the serial link port.
+
+Source: https://github.com/retrio/gb-test-roms
+
+SDL2
+
+The windowed frontend links against SDL2. SDL2 is available under the
+zlib license. See https://www.libsdl.org for details.
+
+The windowed frontend is optional. The headless runner and the tests do
+not require SDL2.

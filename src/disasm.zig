@@ -94,7 +94,7 @@ const Writer = struct {
         } else {
             self.put("JR ");
         }
-        self.offset(pc, signed);
+        self.offset(pc +% 2, signed);
     }
 
     fn putRETC(self: *Writer, flag: []const u8) void {
@@ -140,11 +140,15 @@ const Writer = struct {
     }
 
     fn putLDIMM8(self: *Writer, address: u16, reg: []const u8) void {
-        self.putFmt("LDH (${X:0>2}),{s}", .{address & 0xff, reg});
+        self.putFmt("LDH (${X:0>2}),{s}", .{ address & 0xff, reg });
     }
 
     fn putLDA16(self: *Writer, hi: u8, lo: u8) void {
         self.putFmt("LD A,(${X:0>4})", .{@as(u16, hi) << 8 | lo});
+    }
+
+    fn putLD16A(self: *Writer, hi: u8, lo: u8) void {
+        self.putFmt("LD (${X:0>4}),A", .{@as(u16, hi) << 8 | lo});
     }
 
     fn putADDSP(self: *Writer, pc: u16, signed: u8) void {
@@ -181,30 +185,28 @@ pub fn formatAt(bus: *Bus, pc: u16) Instruction {
     if (opcode == 0xcb) {
         const sub = fetch.byte(1);
         len = 2;
-        const operation = sub >> 3;
+        const group = sub >> 6;
+        const bit: u8 = (sub >> 3) & 7;
         const target: u8 = sub & 7;
-        const base = switch (operation) {
-            0 => "RLC",
-            1 => "RRC",
-            2 => "RL",
-            3 => "RR",
-            4 => "SLA",
-            5 => "SRA",
-            6 => "SWAP",
-            else => "SRL",
-        };
-        if (operation < 8) {
-            writer.put(base);
+        if (group == 0) {
+            const rotate_names = [_][]const u8{ "RLC", "RRC", "RL", "RR", "SLA", "SRA", "SWAP", "SRL" };
+            writer.put(rotate_names[bit]);
             writer.put(" ");
             writer.put(r8(target));
             cycles = if (target == 6) 16 else 8;
-        } else if (operation == 8) {
-            writer.putFmt("BIT {d},", .{@as(u8, sub >> 3) & 7});
+        } else if (group == 1) {
+            writer.put("BIT ");
+            writer.putFmt("{d},", .{bit});
             writer.put(r8(target));
             cycles = if (target == 6) 12 else 8;
-        } else {
+        } else if (group == 2) {
             writer.put("RES ");
-            writer.putFmt("{d},", .{@as(u8, sub >> 3) & 7});
+            writer.putFmt("{d},", .{bit});
+            writer.put(r8(target));
+            cycles = if (target == 6) 16 else 8;
+        } else {
+            writer.put("SET ");
+            writer.putFmt("{d},", .{bit});
             writer.put(r8(target));
             cycles = if (target == 6) 16 else 8;
         }
@@ -332,7 +334,7 @@ pub fn formatAt(bus: *Bus, pc: u16) Instruction {
         0xe7 => writer.putRST(0x20),
         0xe8 => writer.putADDSP(pc, fetch.byte(1)),
         0xe9 => writer.put("JP (HL)"),
-        0xea => writer.putLDA16(fetch.byte(2), fetch.byte(1)),
+        0xea => writer.putLD16A(fetch.byte(2), fetch.byte(1)),
         0xee => writer.putALUIMM("XOR", fetch.byte(1)),
         0xef => writer.putRST(0x28),
         0xf0 => writer.putLDIMM8(@as(u16, 0xff00) + fetch.byte(1), "A"),
@@ -381,22 +383,22 @@ fn instructionLen(opcode: u8) usize {
 
 fn cyclesOf(opcode: u8) u8 {
     const table = [_]u8{
-        4, 12, 8, 8, 4, 4, 8, 4, 20, 8, 8, 8, 4, 4, 8, 4,
-        4, 12, 8, 8, 4, 4, 8, 4, 12, 8, 8, 8, 4, 4, 8, 4,
-        8, 12, 8, 8, 4, 4, 8, 4, 12, 8, 8, 8, 4, 4, 8, 4,
-        8, 12, 8, 8, 12, 12, 12, 4, 12, 8, 8, 8, 4, 4, 8, 4,
-        4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
-        4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,
-        8, 8, 8, 8, 8, 8, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4,
-        8, 8, 8, 8, 8, 8, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4,
-        8, 12, 12, 16, 12, 16, 8, 16, 8, 16, 12, 16, 12, 24, 8, 16,
-        8, 12, 12, 16, 12, 16, 8, 16, 8, 16, 12, 16, 12, 24, 8, 16,
-        8, 12, 12, 16, 12, 16, 8, 16, 8, 16, 12, 16, 12, 24, 8, 16,
-        8, 12, 12, 16, 12, 16, 8, 16, 8, 16, 12, 16, 12, 24, 8, 16,
-        12, 12, 8, 4, 16, 16, 8, 16, 20, 16, 16, 4, 16, 24, 8, 16,
-        12, 12, 8, 4, 16, 16, 8, 16, 20, 16, 16, 4, 16, 24, 8, 16,
-        12, 12, 8, 4, 16, 16, 20, 16, 8, 16, 16, 4, 16, 24, 8, 16,
-        12, 12, 8, 4, 16, 16, 4, 16, 8, 16, 16, 4, 16, 24, 8, 16,
+        4,  12, 8,  8,  4,  4,  8,  4,  20, 8,  8,  8,  4,  4,  8, 4,
+        4,  12, 8,  8,  4,  4,  8,  4,  12, 8,  8,  8,  4,  4,  8, 4,
+        8,  12, 8,  8,  4,  4,  8,  4,  12, 8,  8,  8,  4,  4,  8, 4,
+        8,  12, 8,  8,  12, 12, 12, 4,  12, 8,  8,  8,  4,  4,  8, 4,
+        4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8, 4,
+        4,  4,  4,  4,  4,  4,  8,  4,  4,  4,  4,  4,  4,  4,  8, 4,
+        8,  8,  8,  8,  8,  8,  4,  8,  4,  4,  4,  4,  4,  4,  8, 4,
+        8,  8,  8,  8,  8,  8,  4,  8,  4,  4,  4,  4,  4,  4,  8, 4,
+        8,  12, 12, 16, 12, 16, 8,  16, 8,  16, 12, 16, 12, 24, 8, 16,
+        8,  12, 12, 16, 12, 16, 8,  16, 8,  16, 12, 16, 12, 24, 8, 16,
+        8,  12, 12, 16, 12, 16, 8,  16, 8,  16, 12, 16, 12, 24, 8, 16,
+        8,  12, 12, 16, 12, 16, 8,  16, 8,  16, 12, 16, 12, 24, 8, 16,
+        12, 12, 8,  4,  16, 16, 8,  16, 20, 16, 16, 4,  16, 24, 8, 16,
+        12, 12, 8,  4,  16, 16, 8,  16, 20, 16, 16, 4,  16, 24, 8, 16,
+        12, 12, 8,  4,  16, 16, 20, 16, 8,  16, 16, 4,  16, 24, 8, 16,
+        12, 12, 8,  4,  16, 16, 4,  16, 8,  16, 16, 4,  16, 24, 8, 16,
     };
     return table[opcode];
 }
@@ -419,14 +421,64 @@ test "disassembler formats representative instructions" {
 
     const a = formatAt(&bus, 0x0100);
     try std.testing.expectEqual(@as(usize, 3), a.len);
-    try std.testing.expectEqualStrings("LD HL,$1234", std.mem.trimRight(u8, &a.text, "\x00"));
+    try std.testing.expectEqualStrings("LD HL,$1234", std.mem.trimEnd(u8, &a.text, "\x00"));
 
     const b = formatAt(&bus, 0x0103);
-    try std.testing.expectEqualStrings("LD A,$AA", std.mem.trimRight(u8, &b.text, "\x00"));
+    try std.testing.expectEqualStrings("LD A,$AA", std.mem.trimEnd(u8, &b.text, "\x00"));
 
     const c = formatAt(&bus, 0x0105);
-    try std.testing.expectEqualStrings("RLC C", std.mem.trimRight(u8, &c.text, "\x00"));
+    try std.testing.expectEqualStrings("RLC C", std.mem.trimEnd(u8, &c.text, "\x00"));
 
     const d = formatAt(&bus, 0x0107);
-    try std.testing.expectEqualStrings("JP $1000", std.mem.trimRight(u8, &d.text, "\x00"));
+    try std.testing.expectEqualStrings("JP $1000", std.mem.trimEnd(u8, &d.text, "\x00"));
+}
+
+test "disassembler formats CB bit, reset, and set instructions" {
+    const allocator = std.testing.allocator;
+    var rom = [_]u8{0} ** 0x8000;
+    rom[0x0100] = 0xcb;
+    rom[0x0101] = 0x4f; // BIT 1,A
+    rom[0x0102] = 0xcb;
+    rom[0x0103] = 0x8e; // RES 1,(HL)
+    rom[0x0104] = 0xcb;
+    rom[0x0105] = 0xde; // SET 3,(HL)
+    rom[0x0106] = 0xcb;
+    rom[0x0107] = 0x27; // SLA A
+    var bus = try Bus.init(allocator, &rom);
+    defer bus.deinit();
+
+    const bit = formatAt(&bus, 0x0100);
+    try std.testing.expectEqualStrings("BIT 1,A", std.mem.trimEnd(u8, &bit.text, "\x00"));
+    const res = formatAt(&bus, 0x0102);
+    try std.testing.expectEqualStrings("RES 1,(HL)", std.mem.trimEnd(u8, &res.text, "\x00"));
+    const set = formatAt(&bus, 0x0104);
+    try std.testing.expectEqualStrings("SET 3,(HL)", std.mem.trimEnd(u8, &set.text, "\x00"));
+    const sla = formatAt(&bus, 0x0106);
+    try std.testing.expectEqualStrings("SLA A", std.mem.trimEnd(u8, &sla.text, "\x00"));
+}
+
+test "disassembler formats a16 loads and JR targets from the next PC" {
+    const allocator = std.testing.allocator;
+    var rom = [_]u8{0} ** 0x8000;
+    rom[0x0100] = 0xea; // LD ($FF01),A
+    rom[0x0101] = 0x01;
+    rom[0x0102] = 0xff;
+    rom[0x0103] = 0xfa; // LD A,($C000)
+    rom[0x0104] = 0x00;
+    rom[0x0105] = 0xc0;
+    rom[0x0106] = 0x18; // JR $0108 (offset 0)
+    rom[0x0107] = 0x00;
+    rom[0x0108] = 0x18; // JR $0100 (offset -10)
+    rom[0x0109] = 0xf6;
+    var bus = try Bus.init(allocator, &rom);
+    defer bus.deinit();
+
+    const write = formatAt(&bus, 0x0100);
+    try std.testing.expectEqualStrings("LD ($FF01),A", std.mem.trimEnd(u8, &write.text, "\x00"));
+    const read = formatAt(&bus, 0x0103);
+    try std.testing.expectEqualStrings("LD A,($C000)", std.mem.trimEnd(u8, &read.text, "\x00"));
+    const fwd = formatAt(&bus, 0x0106);
+    try std.testing.expectEqualStrings("JR $0108", std.mem.trimEnd(u8, &fwd.text, "\x00"));
+    const back = formatAt(&bus, 0x0108);
+    try std.testing.expectEqualStrings("JR $0100", std.mem.trimEnd(u8, &back.text, "\x00"));
 }

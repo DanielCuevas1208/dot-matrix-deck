@@ -41,7 +41,7 @@ pub const Emulator = struct {
     pub fn runFrame(self: *Emulator, cap: u64) void {
         var remaining = cap;
         while (!self.bus.ppu.takeFrame()) {
-            self.step();
+            _ = self.step();
             remaining -= 1;
             if (remaining == 0) return;
         }

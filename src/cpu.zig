@@ -273,9 +273,18 @@ pub const Cpu = struct {
 
     fn setPair(self: *Cpu, pair_index: u2, value: u16) void {
         switch (pair_index) {
-            0 => { self.b = @truncate(value >> 8); self.c = @truncate(value); },
-            1 => { self.d = @truncate(value >> 8); self.e = @truncate(value); },
-            2 => { self.h = @truncate(value >> 8); self.l = @truncate(value); },
+            0 => {
+                self.b = @truncate(value >> 8);
+                self.c = @truncate(value);
+            },
+            1 => {
+                self.d = @truncate(value >> 8);
+                self.e = @truncate(value);
+            },
+            2 => {
+                self.h = @truncate(value >> 8);
+                self.l = @truncate(value);
+            },
             else => self.sp = value,
         }
     }
@@ -484,8 +493,13 @@ pub const Cpu = struct {
     }
 
     fn popPair(self: *Cpu, bus: *Bus, pair_index: u2) u16 {
-        self.setPair(pair_index, self.pop(bus));
-        if (pair_index == 3) self.f &= 0xf0;
+        const value = self.pop(bus);
+        if (pair_index == 3) {
+            self.a = @truncate(value >> 8);
+            self.f = @as(u8, @truncate(value)) & 0xf0;
+        } else {
+            self.setPair(pair_index, value);
+        }
         return 12;
     }
 
@@ -681,3 +695,34 @@ pub const Cpu = struct {
         return @as(u16, self.a) << 8 | self.f;
     }
 };
+
+const std = @import("std");
+
+test "POP AF restores A and masks the low nibble of F" {
+    const allocator = std.testing.allocator;
+    var rom = [_]u8{0} ** 0x8000;
+    rom[0x0100] = 0xf1;
+    var bus = try Bus.init(allocator, &rom);
+    defer bus.deinit();
+    var cpu = Cpu{};
+    cpu.sp = 0xc000;
+    bus.write(0xc000, 0x5b);
+    bus.write(0xc001, 0xa3);
+    _ = cpu.step(&bus);
+    try std.testing.expectEqual(@as(u8, 0xa3), cpu.a);
+    try std.testing.expectEqual(@as(u8, 0x50), cpu.f);
+    try std.testing.expectEqual(@as(u16, 0xc002), cpu.sp);
+}
+
+test "POP AF does not disturb SP with a non-AF pair" {
+    const allocator = std.testing.allocator;
+    var rom = [_]u8{0} ** 0x8000;
+    rom[0x0100] = 0xf1; // POP AF would corrupt SP in the old code
+    var bus = try Bus.init(allocator, &rom);
+    defer bus.deinit();
+    var cpu = Cpu{};
+    cpu.sp = 0xd000;
+    _ = cpu.step(&bus);
+    try std.testing.expectEqual(@as(u16, 0xd002), cpu.sp);
+    try std.testing.expectEqual(@as(u16, 0x0101), cpu.pc);
+}
