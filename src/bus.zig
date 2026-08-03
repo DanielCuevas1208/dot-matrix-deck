@@ -1,15 +1,16 @@
 const Cartridge = @import("cartridge.zig").Cartridge;
+const Joypad = @import("joypad.zig").Joypad;
 const Ppu = @import("ppu.zig").Ppu;
 const Timer = @import("timer.zig").Timer;
 
 pub const Bus = struct {
     allocator: @import("std").mem.Allocator,
     cartridge: Cartridge,
+    joypad: Joypad = .{},
     ppu: Ppu = .{},
     timer: Timer = .{},
     wram: [0x2000]u8 = [_]u8{0} ** 0x2000,
     hram: [0x7f]u8 = [_]u8{0} ** 0x7f,
-    joypad: u8 = 0xcf,
     sb: u8 = 0,
     sc: u8 = 0,
     iflag: u8 = 0xe1,
@@ -33,7 +34,7 @@ pub const Bus = struct {
         if (address >= 0xfe00 and address < 0xfea0) return self.ppu.read(address);
         if (address >= 0xff80 and address < 0xffff) return self.hram[address - 0xff80];
         return switch (address) {
-            0xff00 => self.joypad,
+            0xff00 => self.joypad.read(),
             0xff01 => self.sb,
             0xff02 => self.sc,
             0xff0f => self.iflag | 0xe0,
@@ -70,7 +71,7 @@ pub const Bus = struct {
             return;
         }
         switch (address) {
-            0xff00 => self.joypad = (self.joypad & 0xcf) | (value & 0x30),
+            0xff00 => self.joypad.write(value),
             0xff01 => self.sb = value,
             0xff02 => {
                 self.sc = value;
@@ -104,7 +105,44 @@ pub const Bus = struct {
         self.iflag &= ~(@as(u8, 1) << bit);
     }
 
+    // A button press edge raises the joypad interrupt (IF bit 4).
+    pub fn setButton(self: *Bus, bit: Joypad.Button, pressed: bool) void {
+        const was_pressed = self.joypad.isButtonPressed(bit);
+        self.joypad.setButton(bit, pressed);
+        if (pressed and !was_pressed) self.iflag |= 0x10;
+    }
+
+    // A direction press edge raises the joypad interrupt (IF bit 4).
+    pub fn setDirection(self: *Bus, bit: Joypad.Direction, pressed: bool) void {
+        const was_pressed = self.joypad.isDirectionPressed(bit);
+        self.joypad.setDirection(bit, pressed);
+        if (pressed and !was_pressed) self.iflag |= 0x10;
+    }
+
     pub fn serialOutput(self: *const Bus) []const u8 {
         return self.serial[0..self.serial_len];
     }
 };
+
+test "joypad reads the selected button column" {
+    const allocator = @import("std").testing.allocator;
+    const rom = [_]u8{0} ** 0x8000;
+    var bus = try Bus.init(allocator, &rom);
+    defer bus.deinit();
+    bus.write(0xff00, 0x20);
+    bus.setButton(@import("joypad.zig").Joypad.Button.a, true);
+    try @import("std").testing.expectEqual(@as(u8, 0x0e), bus.read(0xff00) & 0x0f);
+}
+
+test "joypad press edge raises the joypad interrupt" {
+    const allocator = @import("std").testing.allocator;
+    const rom = [_]u8{0} ** 0x8000;
+    var bus = try Bus.init(allocator, &rom);
+    defer bus.deinit();
+    bus.write(0xff00, 0x10);
+    bus.setDirection(@import("joypad.zig").Joypad.Direction.right, true);
+    try @import("std").testing.expectEqual(@as(u8, 0x10), bus.iflag & 0x10);
+    bus.setDirection(@import("joypad.zig").Joypad.Direction.right, false);
+    bus.setDirection(@import("joypad.zig").Joypad.Direction.right, true);
+    try @import("std").testing.expectEqual(@as(u8, 0x10), bus.iflag & 0x10);
+}
