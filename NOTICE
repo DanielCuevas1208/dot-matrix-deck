@@ -1,0 +1,26 @@
+# NOTICE
+
+## Project
+
+Dot Matrix Deck is a Game Boy emulator written in Zig.
+It is licensed under the MIT License.
+See the LICENSE file for the full text.
+
+## Test ROMs
+
+The bundled blargg CPU test ROMs in fixtures/blargg come from the
+Game Boy CPU Instruction Behavior Test by Shay Green (blargg).
+The ROMs are distributed through the retrio/gb-test-roms archive at
+https://github.com/retrio/gb-test-roms.
+
+The ROMs verify the behavior of the SM83 instruction set.
+They run in the headless runner through the `zig build test-blargg` step.
+
+The bundled smoke ROM in fixtures/roms is assembled from
+fixtures/asm/smoke.asm by the gbasm tool in this repository.
+
+## Third-party software
+
+The windowed frontend links against SDL2.
+SDL2 is provided by the system package manager or a local prefix.
+The emulator itself does not ship or redistribute SDL2 source code.
