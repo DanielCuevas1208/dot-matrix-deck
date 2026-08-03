@@ -17,6 +17,13 @@ fn sdl2PrefixFound(b: *std.Build, prefix: []const u8) bool {
     return true;
 }
 
+fn sdl2ImportLibFound(b: *std.Build, prefix: []const u8) bool {
+    const library = std.fmt.allocPrint(b.allocator, "{s}/lib/libSDL2.dll.a", .{prefix}) catch return false;
+    defer b.allocator.free(library);
+    b.build_root.handle.access(b.graph.io, library, .{}) catch return false;
+    return true;
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -84,9 +91,22 @@ pub fn build(b: *std.Build) void {
                     .link_libc = true,
                 }),
             });
-            exe.root_module.linkSystemLibrary("SDL2", .{});
             if (target.result.os.tag == .windows) {
+                // Link the DLL import library so the mingw static archive
+                // (built against a different CRT) is not pulled in.
+                if (sdl_prefix) |prefix| {
+                    if (sdl2ImportLibFound(b, prefix)) {
+                        const import_lib = b.pathJoin(&.{ prefix, "lib", "libSDL2.dll.a" });
+                        exe.root_module.addObjectFile(.{ .cwd_relative = import_lib });
+                    } else {
+                        exe.root_module.linkSystemLibrary("SDL2", .{});
+                    }
+                } else {
+                    exe.root_module.linkSystemLibrary("SDL2", .{});
+                }
                 for (sdl_deps) |lib| exe.root_module.linkSystemLibrary(lib, .{});
+            } else {
+                exe.root_module.linkSystemLibrary("SDL2", .{});
             }
             if (sdl_prefix) |prefix| {
                 exe.root_module.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
@@ -123,13 +143,28 @@ pub fn build(b: *std.Build) void {
 
     const asm_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/gbasm.zig"),
+            .root_source_file = b.path("fixtures_tests.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
     const run_asm_tests = b.addRunArtifact(asm_tests);
     test_step.dependOn(&run_asm_tests.step);
+
+    const smoke_rom = b.path("fixtures/roms/smoke.gb");
+    const run_smoke = b.addRunArtifact(headless);
+    run_smoke.addFileArg(smoke_rom);
+    run_smoke.addArgs(&.{ "--expect", "pass", "--max-cycles", "1000000" });
+    test_step.dependOn(&run_smoke.step);
+
+    const smoke_step = b.step("smoke", "Run the bundled smoke ROM headlessly and require a pass verdict");
+    smoke_step.dependOn(&run_smoke.step);
+
+    const frame_run = b.addRunArtifact(headless);
+    frame_run.addFileArg(smoke_rom);
+    frame_run.addArgs(&.{ "--dump-frame", "frame.ppm", "--max-cycles", "1000000" });
+    const frame_step = b.step("frame", "Render one frame of the smoke ROM to frame.ppm in the project root");
+    frame_step.dependOn(&frame_run.step);
 
     const fixtures_step = b.step("fixtures", "Regenerate bundled test ROMs from their assembly sources");
     {

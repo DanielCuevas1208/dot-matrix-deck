@@ -2,6 +2,7 @@ const std = @import("std");
 const Emulator = @import("emulator.zig").Emulator;
 const serial = @import("serial.zig");
 const disasm = @import("disasm.zig");
+const ppu = @import("ppu.zig");
 
 const default_max_cycles: u64 = 2_000_000_000;
 
@@ -11,6 +12,7 @@ const Options = struct {
     max_cycles: u64 = default_max_cycles,
     trace: bool = false,
     expect: ?serial.Verdict = null,
+    dump_frame: ?[]const u8 = null,
     timeout_ms: u64 = 120_000,
 };
 
@@ -19,10 +21,12 @@ fn usage(program: []const u8) void {
         \\Dot Matrix Deck - headless runner
         \\Usage:
         \\  {s} <rom.gb> [--max-cycles N] [--trace] [--expect pass|fail|any]
+        \\      [--dump-frame out.ppm]
         \\  {s} --blargg-suite <directory>
         \\
         \\Runs a ROM without a window, prints its serial output, and sets the
-        \\exit code from the test verdict.
+        \\exit code from the test verdict. --dump-frame writes the final
+        \\screen as a binary PPM image.
         \\
     , .{ program, program });
 }
@@ -77,6 +81,22 @@ const Runner = struct {
     }
 };
 
+fn writeFrame(io: std.Io, allocator: std.mem.Allocator, path: []const u8, frame: *const [ppu.ScreenWidth * ppu.ScreenHeight]u32) !void {
+    const header = try std.fmt.allocPrint(allocator, "P6\n{d} {d}\n255\n", .{ ppu.ScreenWidth, ppu.ScreenHeight });
+    defer allocator.free(header);
+    const data = try allocator.alloc(u8, header.len + ppu.ScreenWidth * ppu.ScreenHeight * 3);
+    defer allocator.free(data);
+    @memcpy(data[0..header.len], header);
+    for (frame, 0..) |pixel, i| {
+        const offset = header.len + i * 3;
+        data[offset + 0] = @truncate(pixel >> 16);
+        data[offset + 1] = @truncate(pixel >> 8);
+        data[offset + 2] = @truncate(pixel);
+    }
+    const dir = std.Io.Dir.cwd();
+    try dir.writeFile(io, .{ .sub_path = path, .data = data });
+}
+
 fn runRom(io: std.Io, allocator: std.mem.Allocator, options: Options) !u8 {
     const rom = try readFile(io, allocator, options.rom_path.?);
     defer allocator.free(rom);
@@ -91,6 +111,10 @@ fn runRom(io: std.Io, allocator: std.mem.Allocator, options: Options) !u8 {
         .start = std.Io.Clock.Timestamp.now(io, .real),
     };
     runner.run();
+
+    if (options.dump_frame) |path| {
+        try writeFrame(io, allocator, path, &emulator.bus.ppu.frame);
+    }
 
     const output = emulator.serialOutput();
     const verdict = serial.verdictOf(output);
@@ -203,6 +227,13 @@ pub fn main(init: std.process.Init) !void {
                 std.process.exit(2);
             }
             options.blargg_suite = argv[index];
+        } else if (std.mem.eql(u8, arg, "--dump-frame")) {
+            index += 1;
+            if (index >= argv.len) {
+                std.debug.print("--dump-frame needs a path\n", .{});
+                std.process.exit(2);
+            }
+            options.dump_frame = argv[index];
         } else if (options.rom_path == null) {
             options.rom_path = arg;
         } else {
