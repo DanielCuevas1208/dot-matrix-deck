@@ -17,6 +17,39 @@ fn sdl2PrefixFound(b: *std.Build, prefix: []const u8) bool {
     return true;
 }
 
+// A step that prints a notice and does nothing else. It lets optional
+// steps like the fixture regenerator skip cleanly when their inputs are
+// not present in the checkout.
+const NoticeStep = struct {
+    step: std.Build.Step,
+    message: []const u8,
+
+    fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) !void {
+        _ = options;
+        const self: *NoticeStep = @fieldParentPtr("step", step);
+        std.debug.print("SKIP: {s}\n", .{self.message});
+    }
+
+    fn create(b: *std.Build, message: []const u8) *std.Build.Step {
+        const self = b.allocator.create(NoticeStep) catch @panic("OOM");
+        self.* = .{
+            .step = std.Build.Step.init(.{
+                .id = .custom,
+                .name = "notice",
+                .owner = b,
+                .makeFn = make,
+            }),
+            .message = message,
+        };
+        return &self.step;
+    }
+};
+
+fn dirExists(b: *std.Build, path: []const u8) bool {
+    b.build_root.handle.access(b.graph.io, path, .{}) catch return false;
+    return true;
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -131,19 +164,33 @@ pub fn build(b: *std.Build) void {
     const run_asm_tests = b.addRunArtifact(asm_tests);
     test_step.dependOn(&run_asm_tests.step);
 
+    const joypad_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/joypad.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_joypad_tests = b.addRunArtifact(joypad_tests);
+    test_step.dependOn(&run_joypad_tests.step);
+
     const fixtures_step = b.step("fixtures", "Regenerate bundled test ROMs from their assembly sources");
-    {
+    if (dirExists(b, "fixtures/asm")) {
         const run = b.addRunArtifact(gbasm);
         run.addDirectoryArg(b.path("fixtures/asm"));
         run.addDirectoryArg(b.path("fixtures/roms"));
         fixtures_step.dependOn(&run.step);
+    } else {
+        fixtures_step.dependOn(NoticeStep.create(b, "fixtures/asm is not present; nothing to regenerate"));
     }
 
     const blargg_step = b.step("test-blargg", "Run the blargg cpu_instrs ROMs in headless mode and check their serial output");
-    {
+    if (dirExists(b, "fixtures/blargg")) {
         const run = b.addRunArtifact(headless);
         run.addArg("--blargg-suite");
         run.addDirectoryArg(b.path("fixtures/blargg"));
         blargg_step.dependOn(&run.step);
+    } else {
+        blargg_step.dependOn(NoticeStep.create(b, "fixtures/blargg is not present; add the ROMs to run the suite"));
     }
 }

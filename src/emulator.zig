@@ -89,3 +89,41 @@ test "page size sanity" {
     try std.testing.expectEqual(@as(usize, 160), ppu.ScreenWidth);
     try std.testing.expectEqual(@as(usize, 144), ppu.ScreenHeight);
 }
+
+fn frameChecksum(frame: []const u32) u64 {
+    var hash: u64 = 0xcbf29ce484222325;
+    for (frame) |pixel| {
+        var bytes = [4]u8{ @truncate(pixel), @truncate(pixel >> 8), @truncate(pixel >> 16), @truncate(pixel >> 24) };
+        for (&bytes) |byte| {
+            hash ^= byte;
+            hash *%= 0x100000001b3;
+        }
+    }
+    return hash;
+}
+
+test "a frame completes within the frame cycle budget" {
+    const allocator = std.testing.allocator;
+    var rom: [0x8000]u8 = [_]u8{0x00} ** 0x8000;
+    var emulator = try Emulator.init(allocator, &rom);
+    defer emulator.deinit();
+    emulator.runFrame(70_224);
+    try std.testing.expectEqual(@as(u64, 0), emulator.total_cycles % 4);
+    try std.testing.expectEqual(@as(u64, 65_664), emulator.total_cycles);
+}
+
+test "frame output is deterministic across runs" {
+    const allocator = std.testing.allocator;
+    var rom: [0x8000]u8 = [_]u8{0x00} ** 0x8000;
+    var first = try Emulator.init(allocator, &rom);
+    defer first.deinit();
+    first.runFrame(70_224);
+    const hash_a = frameChecksum(&first.bus.ppu.frame);
+
+    var second = try Emulator.init(allocator, &rom);
+    defer second.deinit();
+    second.runFrame(70_224);
+    const hash_b = frameChecksum(&second.bus.ppu.frame);
+
+    try std.testing.expectEqual(hash_a, hash_b);
+}
