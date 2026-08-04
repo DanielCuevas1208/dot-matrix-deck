@@ -1,6 +1,7 @@
 const Cartridge = @import("cartridge.zig").Cartridge;
 const Ppu = @import("ppu.zig").Ppu;
 const Timer = @import("timer.zig").Timer;
+const joypad = @import("joypad.zig");
 
 pub const Bus = struct {
     allocator: @import("std").mem.Allocator,
@@ -33,7 +34,7 @@ pub const Bus = struct {
         if (address >= 0xfe00 and address < 0xfea0) return self.ppu.read(address);
         if (address >= 0xff80 and address < 0xffff) return self.hram[address - 0xff80];
         return switch (address) {
-            0xff00 => self.joypad,
+            0xff00 => joypad.readRegister(self.joypad),
             0xff01 => self.sb,
             0xff02 => self.sc,
             0xff0f => self.iflag | 0xe0,
@@ -106,5 +107,11 @@ pub const Bus = struct {
 
     pub fn serialOutput(self: *const Bus) []const u8 {
         return self.serial[0..self.serial_len];
+    }
+
+    // Reports the current held buttons to the joypad register. The
+    // select lines set by software are preserved.
+    pub fn setJoypadButtons(self: *Bus, held: u8) void {
+        self.joypad = (self.joypad & 0x30) | joypad.registerValue(held);
     }
 };

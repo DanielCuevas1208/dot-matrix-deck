@@ -1,0 +1,137 @@
+; Dot Matrix Deck demo ROM.
+;
+; Draws an animated dot-matrix pattern and reports PASS on the link
+; port after about one second. The windowed frontend keeps running the
+; scroll animation forever after the verdict is printed.
+;
+; Cartridge header is not validated by the emulator; the boot entry is
+; enough.
+
+    .org 0x0100
+    nop
+    jp start
+
+    .org 0x0150
+
+start:
+    ld sp, 0xfffe
+
+    ; Copy three tiles into VRAM at 0x8000.
+    ld hl, 0x8000
+    ld de, tile_data
+    ld bc, 0x0030
+copy_tiles:
+    ld a, (de)
+    ld (hl), a
+    inc hl
+    inc de
+    dec bc
+    ld a, b
+    or c
+    jr nz, copy_tiles
+
+    ; Fill the background map with an alternating tile pattern.
+    ld hl, 0x9800
+    ld bc, 0x0400
+    xor a
+fill_map:
+    ld (hl), a
+    inc hl
+    xor 1
+    dec bc
+    ld a, b
+    or c
+    jr nz, fill_map
+
+    ; Place the smiley tile on a few map cells.
+    ld a, 2
+    ld hl, 0x9844
+    ld (hl), a
+    ld hl, 0x9845
+    ld (hl), a
+    ld hl, 0x9865
+    ld (hl), a
+    ld hl, 0x98a4
+    ld (hl), a
+
+    ; Scroll for sixty frames, then report the verdict.
+    ld b, 60
+run_frames:
+    call wait_vblank
+    call scroll
+    dec b
+    jr nz, run_frames
+
+    ; Print PASS over the link port.
+    ld hl, pass_text
+print_loop:
+    ld a, (hl)
+    or a
+    jr z, animate
+    call print_char
+    inc hl
+    jr print_loop
+
+    ; Keep the animation alive for the windowed frontend.
+animate:
+    call wait_vblank
+    call scroll
+    jr animate
+
+; Advances the vertical scroll one step per frame.
+scroll:
+    ld a, (0xff42)
+    inc a
+    ld (0xff42), a
+    ret
+
+; Returns when a full frame boundary has passed.
+wait_vblank:
+    ld a, (0xff44)
+    cp 144
+    jr c, wait_vblank
+wait_active:
+    ld a, (0xff44)
+    cp 144
+    jr nc, wait_active
+    ret
+
+; Sends A over the link port.
+print_char:
+    ld (0xff01), a
+    ld a, 0x81
+    ld (0xff02), a
+    ret
+
+pass_text:
+    .ascii "PASS"
+    .db 10, 0
+
+tile_data:
+    ; Tile 0: checkerboard.
+    .db 0xaa, 0xaa
+    .db 0x55, 0x55
+    .db 0xaa, 0xaa
+    .db 0x55, 0x55
+    .db 0xaa, 0xaa
+    .db 0x55, 0x55
+    .db 0xaa, 0xaa
+    .db 0x55, 0x55
+    ; Tile 1: solid shade 2.
+    .db 0x00, 0xff
+    .db 0x00, 0xff
+    .db 0x00, 0xff
+    .db 0x00, 0xff
+    .db 0x00, 0xff
+    .db 0x00, 0xff
+    .db 0x00, 0xff
+    .db 0x00, 0xff
+    ; Tile 2: smiley.
+    .db 0x3c, 0x3c
+    .db 0x42, 0x42
+    .db 0xa5, 0xa5
+    .db 0x81, 0x81
+    .db 0x99, 0x99
+    .db 0xbd, 0xbd
+    .db 0x81, 0x81
+    .db 0x42, 0x42

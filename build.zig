@@ -57,22 +57,22 @@ pub fn build(b: *std.Build) void {
     };
 
     if (build_windowed) {
-    var sdl_prefix: ?[]const u8 = null;
-    if (sdl2_opt) |value| {
-        if (value.len != 0 and !std.mem.eql(u8, value, "off")) sdl_prefix = value;
-    } else {
-        if (b.graph.environ_map.get("SDL2_DIR")) |dir| {
-            if (dir.len != 0) sdl_prefix = dir;
-        }
-        if (sdl_prefix == null and target.result.os.tag == .windows) {
+        var sdl_prefix: ?[]const u8 = null;
+        if (sdl2_opt) |value| {
+            if (value.len != 0 and !std.mem.eql(u8, value, "off")) sdl_prefix = value;
+        } else {
+            if (b.graph.environ_map.get("SDL2_DIR")) |dir| {
+                if (dir.len != 0) sdl_prefix = dir;
+            }
+            if (sdl_prefix == null and target.result.os.tag == .windows) {
                 for (sdl_prefix_candidates) |candidate| {
                     if (sdl2PrefixFound(b, candidate)) {
                         sdl_prefix = candidate;
                         break;
                     }
                 }
+            }
         }
-    }
 
         if (sdl_prefix != null or target.result.os.tag != .windows) {
             const exe = b.addExecutable(.{
@@ -91,9 +91,20 @@ pub fn build(b: *std.Build) void {
             if (sdl_prefix) |prefix| {
                 exe.root_module.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
                 exe.root_module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib" }) });
+                // On Windows prefer the DLL import library. The static
+                // mingw archive drags in CRT symbols Zig does not ship.
+                if (target.result.os.tag == .windows) {
+                    exe.root_module.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib", "libSDL2.dll.a" }) });
+                    const shim = b.addObject(.{ .name = "sdl_mingw_shim", .root_module = b.createModule(.{
+                        .root_source_file = b.path("src/sdl_mingw_shim.zig"),
+                        .target = target,
+                        .optimize = optimize,
+                    }) });
+                    exe.root_module.addObject(shim);
+                }
                 const dll_path = b.pathJoin(&.{ prefix, "bin", "SDL2.dll" });
                 if (sdl2PrefixFound(b, prefix)) {
-                    const install_dll = b.addInstallBinFile(.{ .cwd_relative = dll_path }, "bin/SDL2.dll");
+                    const install_dll = b.addInstallBinFile(.{ .cwd_relative = dll_path }, "SDL2.dll");
                     b.getInstallStep().dependOn(&install_dll.step);
                 }
             }
@@ -118,8 +129,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_core_tests = b.addRunArtifact(core_tests);
-    const test_step = b.step("test", "Run deterministic unit tests and bundled ROM tests");
-    test_step.dependOn(&run_core_tests.step);
 
     const asm_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -129,7 +138,56 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_asm_tests = b.addRunArtifact(asm_tests);
+
+    const joypad_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/joypad.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_joypad_tests = b.addRunArtifact(joypad_tests);
+
+    const serial_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/serial.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_serial_tests = b.addRunArtifact(serial_tests);
+
+    const disasm_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/disasm.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_disasm_tests = b.addRunArtifact(disasm_tests);
+
+    const gbasm_mod = b.createModule(.{
+        .root_source_file = b.path("tools/gbasm.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const end_to_end_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "gbasm", .module = gbasm_mod }},
+        }),
+    });
+    const run_end_to_end_tests = b.addRunArtifact(end_to_end_tests);
+
+    const test_step = b.step("test", "Run deterministic unit tests and bundled ROM tests");
+    test_step.dependOn(&run_core_tests.step);
     test_step.dependOn(&run_asm_tests.step);
+    test_step.dependOn(&run_joypad_tests.step);
+    test_step.dependOn(&run_serial_tests.step);
+    test_step.dependOn(&run_disasm_tests.step);
+    test_step.dependOn(&run_end_to_end_tests.step);
 
     const fixtures_step = b.step("fixtures", "Regenerate bundled test ROMs from their assembly sources");
     {
@@ -138,6 +196,16 @@ pub fn build(b: *std.Build) void {
         run.addDirectoryArg(b.path("fixtures/roms"));
         fixtures_step.dependOn(&run.step);
     }
+
+    const demo_step = b.step("run-demo", "Run the bundled demo ROM and check it reports PASS");
+    {
+        const run = b.addRunArtifact(headless);
+        run.addArg("--expect");
+        run.addArg("pass");
+        run.addFileArg(b.path("fixtures/roms/demo.gb"));
+        demo_step.dependOn(&run.step);
+    }
+    demo_step.dependOn(fixtures_step);
 
     const blargg_step = b.step("test-blargg", "Run the blargg cpu_instrs ROMs in headless mode and check their serial output");
     {

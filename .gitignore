@@ -10,3 +10,7 @@ zig-out/
 *.gb
 *.sav
 *.swp
+
+# The bundled demo and test ROMs are generated from fixtures/asm and
+# committed so the demo works without running the build step first.
+!fixtures/roms/*.gb

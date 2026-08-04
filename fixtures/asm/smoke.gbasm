@@ -1,0 +1,27 @@
+; Minimal boot test ROM.
+;
+; Prints PASS on the link port immediately and then idles. This is the
+; cheapest end-to-end check that a ROM boots and reports a verdict.
+
+    .org 0x0100
+    nop
+    jp start
+
+start:
+    ld sp, 0xfffe
+    ld hl, pass_text
+print_loop:
+    ld a, (hl)
+    or a
+    jr z, idle
+    ld (0xff01), a
+    ld a, 0x81
+    ld (0xff02), a
+    inc hl
+    jr print_loop
+idle:
+    jr idle
+
+pass_text:
+    .ascii "PASS"
+    .db 10, 0

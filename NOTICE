@@ -1,0 +1,3 @@
+This project links the SDL2 library at build time. SDL2 is a
+third-party library. It is not part of this source tree. The SDL2 source
+is available from the SDL website. This project does not bundle SDL2.

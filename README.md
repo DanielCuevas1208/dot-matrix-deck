@@ -1,45 +1,53 @@
 # Dot Matrix Deck
 
-Dot Matrix Deck is a Game Boy emulator workbench written in Zig. It models the
-SM83 CPU, the memory bus, timers, serial output, and the pixel pipeline. A
-headless runner makes emulator behavior easy to inspect in scripts and CI.
-
-## Current status
-
-This project is under active development. The headless core is the most useful
-entry point today. The SDL2 windowed frontend is available when SDL2 is
-installed, but it is still being built out.
+Dot Matrix Deck is a Game Boy emulator. It is written in Zig. It
+emulates the SM83 CPU, the memory bus, the timers, and the pixel
+pipeline. A window shows the screen with SDL2. A headless mode runs
+test ROMs without a window.
 
 ## Features
 
-- SM83 CPU and instruction execution
-- Memory bus with timer, serial, and pixel-processing components
-- Headless ROM runner with cycle limits and serial verdicts
-- Optional instruction trace output
-- Small assembler tool for test ROM sources
-- Deterministic unit tests for the emulator core and assembler
+- SM83 CPU with the full base and CB instruction sets
+- Memory bus with timer, serial, joypad, and pixel components
+- Pixel pipeline with background, window, and sprites
+- MBC1 and ROM-only cartridges
+- Headless runner with serial verdicts
+- SDL2 window with keyboard controls
+- gbasm assembler for test ROMs
+- Bundled demo ROM that draws and reports PASS
+- Deterministic unit and end-to-end tests
 
 ## Requirements
 
 - Zig 0.16 or later
-- SDL2 for the optional windowed frontend
+- SDL2 for the windowed frontend
 
-The headless build does not require SDL2. On Windows, the build searches common
-MSYS2 and vcpkg prefixes. You can also set `SDL2_DIR` or pass an SDL2 prefix.
+The headless build does not need SDL2. On Windows, the build searches
+common MSYS2 and vcpkg prefixes. Set `SDL2_DIR` to use another prefix.
 
 ## Build
 
-Build the headless runner and assembler:
+Build the headless tools:
 
 ```text
 zig build -Dsdl2=off
 ```
 
-Build with the windowed frontend when SDL2 is available:
+Build the windowed frontend:
 
 ```text
 zig build
 ```
+
+## Run the demo
+
+Run the demo ROM and check its verdict:
+
+```text
+zig build run-demo -Dsdl2=off
+```
+
+The demo draws a pattern and reports PASS over the link port.
 
 ## Run a ROM
 
@@ -49,41 +57,58 @@ Run a ROM without a window:
 zig build run-headless -- path/to/rom.gb
 ```
 
-Useful options are `--max-cycles N`, `--trace`, and `--expect pass|fail|any`.
-The runner prints serial output and returns a status from the detected verdict.
+The runner prints the serial output. It sets the exit code from the
+verdict. Useful options are `--max-cycles N`, `--trace`, and
+`--expect pass|fail|any`.
 
-Run a ROM in the SDL2 frontend:
+Run a ROM in a window:
 
 ```text
 zig build run -- path/to/rom.gb
 ```
 
+## Controls
+
+Use the arrow keys to move. Use Z and X for the A and B buttons. Use
+Enter and Backspace for Start and Select. Press Escape to quit.
+
 ## Test
 
-Run the core and assembler tests:
+Run all tests:
 
 ```text
 zig build test -Dsdl2=off
 ```
 
-The repository also contains build steps for generated fixtures and the Blargg
-CPU instruction suite. Add the required fixture files before using those steps.
+The tests cover the CPU, the timer, the serial port, the disassembler,
+the assembler, and the ROM fixtures.
 
 ## Project layout
 
-- `src/cpu.zig` - SM83 CPU implementation
-- `src/emulator.zig` - emulator composition and core tests
-- `src/bus.zig` - memory and device routing
-- `src/headless.zig` - command-line ROM runner
-- `src/main.zig` - SDL2 frontend
-- `tools/gbasm.zig` - small assembler for fixture ROMs
+- `src/cpu.zig` - the SM83 CPU
+- `src/bus.zig` - the memory bus
+- `src/ppu.zig` - the pixel pipeline
+- `src/timer.zig` - the timer
+- `src/cartridge.zig` - cartridges and MBC1
+- `src/headless.zig` - the headless runner
+- `src/frontend.zig` - the SDL2 window
+- `src/joypad.zig` - the joypad
+- `src/disasm.zig` - the disassembler
+- `tools/gbasm.zig` - the assembler
+- `fixtures/` - bundled test ROMs and sources
+- `docs/` - roadmap and architecture notes
+
+## Test status
+
+The project runs 44 tests in CI. The CI checks formatting, builds, and
+the demo verdict. It runs on Linux and Windows.
 
 ## Limitations
 
-Hardware coverage is incomplete. Timing accuracy, cartridge support, audio,
-and frontend features will improve as the project grows.
+Timing accuracy is incomplete. Audio is not implemented. Only MBC1
+cartridges work. The windowed frontend is basic. See `docs/roadmap.md`
+for the remaining work.
 
 ## License
 
-No license file is published yet. Treat this repository as an experimental
-project until a license is added.
+MIT. See `LICENSE`.
