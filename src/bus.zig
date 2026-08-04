@@ -101,6 +101,7 @@ pub const Bus = struct {
     pub fn tick(self: *Bus, cycles: u16) void {
         self.timer.tick(cycles, &self.iflag);
         self.ppu.tick(cycles, &self.iflag);
+        self.cartridge.tick(cycles);
     }
 
     // Runs one DMA machine cycle. Copies one byte from the source page
@@ -191,4 +192,38 @@ test "DMA register reads back the last source page" {
     try testing.expectEqual(@as(u8, 0x80), bus.read(0xff46));
     while (bus.dma.active()) _ = bus.dmaStep();
     try testing.expectEqual(@as(u8, 0x80), bus.read(0xff46));
+}
+
+test "bus ticks the MBC3 clock through FF registers" {
+    var image: [0x40000]u8 = [_]u8{0} ** 0x40000;
+    image[0x147] = 0x0f; // MBC3
+    image[0x149] = 0x03; // 32KB RAM
+    var bus = try Bus.init(testing.allocator, &image);
+    defer bus.deinit();
+
+    bus.write(0x0000, 0x0a); // enable RAM
+    bus.write(0x4000, 0x0c); // RTC control register
+    bus.write(0xa000, 0x40); // halt the clock
+    bus.write(0x4000, 0x08); // seconds
+    bus.write(0xa000, 0x59);
+    bus.write(0x4000, 0x09); // minutes
+    bus.write(0xa000, 0x00);
+    bus.write(0x4000, 0x0a); // hours
+    bus.write(0xa000, 0x00);
+    bus.write(0x4000, 0x0c); // clear halt
+    bus.write(0xa000, 0x00);
+
+    // One second of cycles advances the clock by one minute.
+    const chunks: u32 = 128;
+    const per_chunk: u16 = @intCast(Cartridge.cycles_per_second / chunks);
+    for (0..chunks) |_| bus.tick(per_chunk);
+
+    bus.write(0x4000, 0x09);
+    bus.write(0x6000, 0x00);
+    bus.write(0x6000, 0x01);
+    try testing.expectEqual(@as(u8, 0x01), bus.read(0xa000));
+    bus.write(0x4000, 0x08);
+    bus.write(0x6000, 0x00);
+    bus.write(0x6000, 0x01);
+    try testing.expectEqual(@as(u8, 0x00), bus.read(0xa000));
 }

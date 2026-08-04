@@ -24,7 +24,7 @@ The core splits into small modules with one job each.
 - `src/bus.zig` routes memory between the devices.
 - `src/timer.zig` models the game clock.
 - `src/ppu.zig` renders background, sprites, and the window.
-- `src/cartridge.zig` loads ROM-only and MBC1 images and banks their memory.
+- `src/cartridge.zig` loads ROM-only, MBC1, MBC2, MBC3, and MBC5 images. It banks their memory and drives the MBC3 real-time clock.
 - `src/dma.zig` copies pages into OAM with the correct timing.
 - `src/serial.zig` turns link-port bytes into test verdicts.
 - `src/joypad.zig` reports button state through the FF00 register.
@@ -120,11 +120,14 @@ zig build fixtures -Dsdl2=off
 
 Each `.asm` file in `fixtures/asm` becomes a `.gb` image in `fixtures/roms`.
 The round-trip tests keep those images in sync.
-The suite ships three ROMs:
+The suite ships six ROMs:
 
 - `demo` renders the title and prints PASS.
 - `dma` copies a page into OAM and checks the result.
 - `banking` switches MBC1 banks and checks each marker.
+- `mbc2` switches MBC2 banks and checks the internal RAM.
+- `mbc3` switches MBC3 banks, RAM banks, and the real-time clock.
+- `mbc5` switches MBC5 banks and RAM banks.
 
 ## Test
 
@@ -156,6 +159,8 @@ Hardware coverage is incomplete.
 Timing accuracy, cartridge support, audio, and save games will improve.
 The core starts at the post-boot state.
 It does not emulate the boot ROM.
+The MBC3 clock advances with the emulated cycle count.
+It does not follow the host clock.
 
 ## License
 

@@ -18,6 +18,9 @@ const fixtures = [_]Fixture{
     .{ .name = "demo", .source = @embedFile("fixtures/asm/demo.asm"), .image = @embedFile("fixtures/roms/demo.gb") },
     .{ .name = "dma", .source = @embedFile("fixtures/asm/dma.asm"), .image = @embedFile("fixtures/roms/dma.gb") },
     .{ .name = "banking", .source = @embedFile("fixtures/asm/banking.asm"), .image = @embedFile("fixtures/roms/banking.gb") },
+    .{ .name = "mbc2", .source = @embedFile("fixtures/asm/mbc2.asm"), .image = @embedFile("fixtures/roms/mbc2.gb") },
+    .{ .name = "mbc3", .source = @embedFile("fixtures/asm/mbc3.asm"), .image = @embedFile("fixtures/roms/mbc3.gb") },
+    .{ .name = "mbc5", .source = @embedFile("fixtures/asm/mbc5.asm"), .image = @embedFile("fixtures/roms/mbc5.gb") },
 };
 
 test "fixture images round-trip byte for byte" {
@@ -58,6 +61,33 @@ test "DMA ROM reports PASS" {
 
 test "banking ROM reports PASS" {
     const fixture = fixtures[2];
+    var emulator = try Emulator.init(std.testing.allocator, fixture.image);
+    defer emulator.deinit();
+    var frame_index: u32 = 0;
+    while (frame_index < 40) : (frame_index += 1) emulator.runFrame(1 << 24);
+    try std.testing.expect(std.mem.indexOf(u8, emulator.serialOutput(), "PASS") != null);
+}
+
+test "MBC2 ROM reports PASS" {
+    const fixture = fixtures[3];
+    var emulator = try Emulator.init(std.testing.allocator, fixture.image);
+    defer emulator.deinit();
+    var frame_index: u32 = 0;
+    while (frame_index < 40) : (frame_index += 1) emulator.runFrame(1 << 24);
+    try std.testing.expect(std.mem.indexOf(u8, emulator.serialOutput(), "PASS") != null);
+}
+
+test "MBC3 ROM reports PASS" {
+    const fixture = fixtures[4];
+    var emulator = try Emulator.init(std.testing.allocator, fixture.image);
+    defer emulator.deinit();
+    var frame_index: u32 = 0;
+    while (frame_index < 40) : (frame_index += 1) emulator.runFrame(1 << 24);
+    try std.testing.expect(std.mem.indexOf(u8, emulator.serialOutput(), "PASS") != null);
+}
+
+test "MBC5 ROM reports PASS" {
+    const fixture = fixtures[5];
     var emulator = try Emulator.init(std.testing.allocator, fixture.image);
     defer emulator.deinit();
     var frame_index: u32 = 0;
