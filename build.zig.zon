@@ -1,6 +1,6 @@
 .{
     .name = .dot_matrix_deck,
-    .version = "0.1.0",
+    .version = "0.2.0",
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0x3ad14c39cc8e69a1,
     .paths = .{
@@ -9,7 +9,10 @@
         "src",
         "tools",
         "fixtures",
+        "fixtures_tests.zig",
+        "ROADMAP.md",
         "README.md",
+        "CONTRIBUTING.md",
         "LICENSE",
         "NOTICE",
         ".github",

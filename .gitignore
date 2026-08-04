@@ -8,5 +8,6 @@ zig-out/
 *.exe
 .DS_Store
 *.gb
+!fixtures/roms/*.gb
 *.sav
 *.swp

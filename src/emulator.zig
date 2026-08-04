@@ -41,7 +41,7 @@ pub const Emulator = struct {
     pub fn runFrame(self: *Emulator, cap: u64) void {
         var remaining = cap;
         while (!self.bus.ppu.takeFrame()) {
-            self.step();
+            _ = self.step();
             remaining -= 1;
             if (remaining == 0) return;
         }
@@ -59,6 +59,7 @@ pub const Emulator = struct {
         self.cpu = .{};
         self.bus.ppu = .{};
         self.bus.timer = .{};
+        self.bus.joypad = .{};
         self.bus.serial_len = 0;
         self.total_cycles = 0;
         self.total_instructions = 0;
