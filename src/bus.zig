@@ -1,4 +1,5 @@
 const Cartridge = @import("cartridge.zig").Cartridge;
+const Dma = @import("dma.zig").Dma;
 const Joypad = @import("joypad.zig").Joypad;
 const Ppu = @import("ppu.zig").Ppu;
 const Timer = @import("timer.zig").Timer;
@@ -6,6 +7,7 @@ const Timer = @import("timer.zig").Timer;
 pub const Bus = struct {
     allocator: @import("std").mem.Allocator,
     cartridge: Cartridge,
+    dma: Dma = .{},
     joypad: Joypad = .{},
     ppu: Ppu = .{},
     timer: Timer = .{},
@@ -39,7 +41,9 @@ pub const Bus = struct {
             0xff02 => self.sc,
             0xff0f => self.iflag | 0xe0,
             0xff04...0xff07 => self.timer.read(address),
-            0xff40...0xff4b => self.ppu.read(address),
+            0xff40...0xff45 => self.ppu.read(address),
+            0xff46 => self.dma.read(),
+            0xff47...0xff4b => self.ppu.read(address),
             0xffff => self.ie,
             else => 0xff,
         };
@@ -86,7 +90,9 @@ pub const Bus = struct {
             },
             0xff0f => self.iflag = value & 0x1f,
             0xff04...0xff07 => self.timer.write(address, value),
-            0xff40...0xff4b => self.ppu.write(address, value),
+            0xff40...0xff45 => self.ppu.write(address, value),
+            0xff46 => self.dma.start(value),
+            0xff47...0xff4b => self.ppu.write(address, value),
             0xffff => self.ie = value,
             else => {},
         }
@@ -95,6 +101,17 @@ pub const Bus = struct {
     pub fn tick(self: *Bus, cycles: u16) void {
         self.timer.tick(cycles, &self.iflag);
         self.ppu.tick(cycles, &self.iflag);
+    }
+
+    // Runs one DMA machine cycle. Copies one byte from the source page
+    // into OAM and advances the timer and PPU. Returns cycles consumed.
+    pub fn dmaStep(self: *Bus) u16 {
+        const source = self.dma.next() orelse return 0;
+        const index = self.dma.offset - 1;
+        self.ppu.oam[index] = self.read(source);
+        self.timer.tick(Dma.cycles_per_byte, &self.iflag);
+        self.ppu.tick(Dma.cycles_per_byte, &self.iflag);
+        return Dma.cycles_per_byte;
     }
 
     pub fn pendingInterrupts(self: *const Bus) u8 {
@@ -130,7 +147,7 @@ test "joypad reads the selected button column" {
     const rom = [_]u8{0} ** 0x8000;
     var bus = try Bus.init(testing.allocator, &rom);
     defer bus.deinit();
-    bus.write(0xff00, 0x20);
+    bus.write(0xff00, 0x10); // bit 5 low selects the buttons column.
     bus.setButton(Joypad.Button.a, true);
     try testing.expectEqual(@as(u8, 0x0e), bus.read(0xff00) & 0x0f);
 }
@@ -139,10 +156,39 @@ test "joypad press edge raises the joypad interrupt" {
     const rom = [_]u8{0} ** 0x8000;
     var bus = try Bus.init(testing.allocator, &rom);
     defer bus.deinit();
-    bus.write(0xff00, 0x10);
+    bus.write(0xff00, 0x20); // bit 4 low selects the D-pad column.
     bus.setDirection(Joypad.Direction.right, true);
     try testing.expectEqual(@as(u8, 0x10), bus.iflag & 0x10);
     bus.setDirection(Joypad.Direction.right, false);
     bus.setDirection(Joypad.Direction.right, true);
     try testing.expectEqual(@as(u8, 0x10), bus.iflag & 0x10);
+}
+
+test "DMA transfers a WRAM page into OAM" {
+    const rom = [_]u8{0} ** 0x8000;
+    var bus = try Bus.init(testing.allocator, &rom);
+    defer bus.deinit();
+    for (0..Dma.byte_count) |i| {
+        bus.write(0xc000 + @as(u16, @intCast(i)), @intCast(i & 0xff));
+    }
+    bus.write(0xff46, 0xc0);
+    try testing.expectEqual(@as(u8, 0xc0), bus.read(0xff46));
+    var steps: u32 = 0;
+    while (bus.dma.active()) : (steps += 1) {
+        try testing.expectEqual(@as(u16, 4), bus.dmaStep());
+    }
+    try testing.expectEqual(@as(u32, 160), steps);
+    for (0..Dma.byte_count) |i| {
+        try testing.expectEqual(@as(u8, @intCast(i & 0xff)), bus.read(0xfe00 + @as(u16, @intCast(i))));
+    }
+}
+
+test "DMA register reads back the last source page" {
+    const rom = [_]u8{0} ** 0x8000;
+    var bus = try Bus.init(testing.allocator, &rom);
+    defer bus.deinit();
+    bus.write(0xff46, 0x80);
+    try testing.expectEqual(@as(u8, 0x80), bus.read(0xff46));
+    while (bus.dma.active()) _ = bus.dmaStep();
+    try testing.expectEqual(@as(u8, 0x80), bus.read(0xff46));
 }

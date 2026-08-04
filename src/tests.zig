@@ -6,6 +6,8 @@
 test {
     _ = @import("emulator.zig");
     _ = @import("bus.zig");
+    _ = @import("cartridge.zig");
+    _ = @import("dma.zig");
     _ = @import("joypad.zig");
     _ = @import("frontend.zig");
     _ = @import("serial.zig");

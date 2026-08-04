@@ -1,0 +1,11 @@
+# Normalize line endings so format checks behave the same on every OS.
+# Files are stored with LF and checked out with LF on all platforms.
+* text=auto
+*.zig text eol=lf
+*.zon text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.asm text eol=lf
+*.gb binary
+*.png binary
+*.jpg binary

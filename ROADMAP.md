@@ -5,7 +5,7 @@ This document tracks what the project delivers and what remains.
 ## Release 0.2
 
 Release 0.2 makes the emulator a usable workbench. It adds input,
-a windowed frontend, an assembler, and a bundled demo ROM.
+DMA, cartridge banking, an assembler, and bundled test ROMs.
 
 ### Done
 
@@ -13,12 +13,13 @@ a windowed frontend, an assembler, and a bundled demo ROM.
 - Memory bus with WRAM, HRAM, and hardware I/O registers.
 - Timer with DIV, TIMA, TMA, and TAC.
 - PPU with background maps, tile data, and sprite rendering.
-- Cartridge support for ROM-only and MBC1 images.
+- Cartridge support for ROM-only and MBC1 images with bank switching.
+- OAM DMA with cycle-accurate CPU blocking.
 - Headless ROM runner with cycle caps, traces, and verdicts.
-- Joypad device with column selection and press-edge interrupts.
+- Joypad device with active-low column selection and press-edge interrupts.
 - SDL2 windowed frontend with a DMG-style shell and pause controls.
 - SM83 assembler with labels, data directives, and expressions.
-- Bundled demo ROM that draws a title and prints PASS.
+- Bundled demo, DMA, and banking ROMs that report PASS.
 - Deterministic unit tests for every core module.
 - Continuous integration on Ubuntu and Windows.
 

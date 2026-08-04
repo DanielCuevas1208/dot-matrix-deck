@@ -44,14 +44,16 @@ Follow these rules.
 
 ## Regenerate fixtures
 
-Update the demo ROM only through its source.
+Update the bundled ROMs only through their sources.
 
 ```text
 zig build fixtures -Dsdl2=off
 ```
 
-Commit the `.asm` source and the generated `.gb` image together.
-The round-trip test checks that they stay in sync.
+Commit each `.asm` source and the generated `.gb` image together.
+The round-trip tests check that they stay in sync.
+Each ROM must print PASS over the serial port.
+Keep the ROM small so the headless runner stays fast.
 
 ## Open a pull request
 

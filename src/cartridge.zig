@@ -76,3 +76,127 @@ pub const Cartridge = struct {
         return if (index < self.rom.len) self.rom[index] else 0xff;
     }
 };
+
+const testing = @import("std").testing;
+
+// Builds a 256KB MBC1 image with a distinct marker byte at the start of
+// every 16KB bank. The header claims MBC1 and 32KB of RAM.
+fn mbc1Image(allocator: std.mem.Allocator) ![]u8 {
+    const image = try allocator.alloc(u8, 0x40000);
+    @memset(image, 0);
+    image[0x147] = 0x01; // MBC1
+    image[0x149] = 0x03; // 32KB RAM
+    for (0..16) |bank| {
+        image[bank * 0x4000] = @intCast(bank + 1);
+    }
+    return image;
+}
+
+fn romOnlyImage(allocator: std.mem.Allocator) ![]u8 {
+    const image = try allocator.alloc(u8, 0x8000);
+    @memset(image, 0);
+    image[0x147] = 0x00; // ROM only
+    return image;
+}
+
+test "ROM-only cartridge ignores mapper writes" {
+    const image = try romOnlyImage(testing.allocator);
+    defer testing.allocator.free(image);
+    var cartridge = try Cartridge.init(testing.allocator, image);
+    defer cartridge.deinit();
+
+    cartridge.write(0x2000, 0x03);
+    cartridge.write(0x0000, 0x0a);
+    cartridge.write(0xa000, 0x42);
+    try testing.expectEqual(@as(u8, 0xff), cartridge.read(0xa000));
+    try testing.expectEqual(@as(u8, 0x00), cartridge.read(0x4000));
+}
+
+test "MBC1 switches ROM banks through the low register" {
+    const image = try mbc1Image(testing.allocator);
+    defer testing.allocator.free(image);
+    var cartridge = try Cartridge.init(testing.allocator, image);
+    defer cartridge.deinit();
+
+    // Bank 1 is the default for the 4000-7FFF window.
+    try testing.expectEqual(@as(u8, 2), cartridge.read(0x4000));
+
+    cartridge.write(0x2000, 0x05);
+    try testing.expectEqual(@as(u8, 6), cartridge.read(0x4000));
+
+    // Writing zero selects bank 1 instead of bank 0.
+    cartridge.write(0x2000, 0x00);
+    try testing.expectEqual(@as(u8, 2), cartridge.read(0x4000));
+}
+
+test "MBC1 keeps the low window pinned to bank 0" {
+    const image = try mbc1Image(testing.allocator);
+    defer testing.allocator.free(image);
+    var cartridge = try Cartridge.init(testing.allocator, image);
+    defer cartridge.deinit();
+
+    cartridge.write(0x2000, 0x07);
+    try testing.expectEqual(@as(u8, 1), cartridge.read(0x0000));
+}
+
+test "MBC1 gates external RAM writes on the enable register" {
+    const image = try mbc1Image(testing.allocator);
+    defer testing.allocator.free(image);
+    var cartridge = try Cartridge.init(testing.allocator, image);
+    defer cartridge.deinit();
+
+    // Disabled RAM ignores writes and reads open-bus.
+    cartridge.write(0xa000, 0x42);
+    try testing.expectEqual(@as(u8, 0xff), cartridge.read(0xa000));
+
+    cartridge.write(0x0000, 0x0a);
+    cartridge.write(0xa000, 0x42);
+    try testing.expectEqual(@as(u8, 0x42), cartridge.read(0xa000));
+
+    // Any other low nibble disables RAM again.
+    cartridge.write(0x0000, 0x00);
+    cartridge.write(0xa000, 0x43);
+    cartridge.write(0x0000, 0x0a);
+    try testing.expectEqual(@as(u8, 0x42), cartridge.read(0xa000));
+}
+
+test "MBC1 banking mode selects RAM banks" {
+    const image = try mbc1Image(testing.allocator);
+    defer testing.allocator.free(image);
+    var cartridge = try Cartridge.init(testing.allocator, image);
+    defer cartridge.deinit();
+
+    cartridge.write(0x0000, 0x0a);
+    // Mode 1 uses the high ROM register to pick the RAM bank.
+    cartridge.write(0x6000, 0x01);
+    cartridge.write(0x4000, 0x02);
+    cartridge.write(0xa000, 0x11);
+    try testing.expectEqual(@as(u8, 0x11), cartridge.read(0xa000));
+
+    // Mode 0 pins RAM to bank 0 and ignores the high register.
+    cartridge.write(0x6000, 0x00);
+    cartridge.write(0x4000, 0x00);
+    cartridge.write(0xa000, 0x22);
+    try testing.expectEqual(@as(u8, 0x22), cartridge.read(0xa000));
+
+    // Back in mode 1, RAM bank 2 still holds its earlier byte.
+    cartridge.write(0x6000, 0x01);
+    cartridge.write(0x4000, 0x02);
+    try testing.expectEqual(@as(u8, 0x11), cartridge.read(0xa000));
+
+    // RAM bank 0 holds the mode-0 write.
+    cartridge.write(0x4000, 0x00);
+    try testing.expectEqual(@as(u8, 0x22), cartridge.read(0xa000));
+}
+
+test "MBC1 reads past the end of ROM as open bus" {
+    const image = try mbc1Image(testing.allocator);
+    defer testing.allocator.free(image);
+    var cartridge = try Cartridge.init(testing.allocator, image);
+    defer cartridge.deinit();
+
+    // 16 banks fill the image; selecting bank 31 reads past the end.
+    cartridge.write(0x2000, 0x1f);
+    cartridge.write(0x4000, 0x03);
+    try testing.expectEqual(@as(u8, 0xff), cartridge.read(0x4000));
+}

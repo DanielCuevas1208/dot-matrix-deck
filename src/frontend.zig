@@ -138,7 +138,7 @@ test "control keys are not forwarded to the joypad" {
     try testing.expect(!applyKey(&bus, .pause, true));
     try testing.expect(!applyKey(&bus, .reset, true));
     try testing.expect(!applyKey(&bus, .fast_forward, true));
-    try testing.expectEqual(@as(u8, 0xcf), bus.read(0xff00));
+    try testing.expectEqual(@as(u8, 0xff), bus.read(0xff00));
 }
 
 test "window layout keeps the screen centered" {

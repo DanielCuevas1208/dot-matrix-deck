@@ -24,7 +24,8 @@ The core splits into small modules with one job each.
 - `src/bus.zig` routes memory between the devices.
 - `src/timer.zig` models the game clock.
 - `src/ppu.zig` renders background, sprites, and the window.
-- `src/cartridge.zig` loads ROM-only and MBC1 images.
+- `src/cartridge.zig` loads ROM-only and MBC1 images and banks their memory.
+- `src/dma.zig` copies pages into OAM with the correct timing.
 - `src/serial.zig` turns link-port bytes into test verdicts.
 - `src/joypad.zig` reports button state through the FF00 register.
 - `src/emulator.zig` ties the core together.
@@ -34,6 +35,11 @@ The core splits into small modules with one job each.
 
 The frontend logic stays free of SDL2.
 Unit tests cover that logic in headless builds.
+
+The joypad uses the real register semantics.
+The select bits are active-low.
+A cleared bit selects a column.
+The register returns the stored select bits when read.
 
 ## Requirements
 
@@ -113,7 +119,12 @@ zig build fixtures -Dsdl2=off
 ```
 
 Each `.asm` file in `fixtures/asm` becomes a `.gb` image in `fixtures/roms`.
-The round-trip test keeps those images in sync.
+The round-trip tests keep those images in sync.
+The suite ships three ROMs:
+
+- `demo` renders the title and prints PASS.
+- `dma` copies a page into OAM and checks the result.
+- `banking` switches MBC1 banks and checks each marker.
 
 ## Test
 
@@ -136,7 +147,7 @@ Add the blargg `cpu_instrs` ROMs under `fixtures/blargg` first.
 
 - `src/` holds the emulator core and frontend.
 - `tools/` holds the assembler.
-- `fixtures/` holds the demo ROM and its source.
+- `fixtures/` holds the bundled ROMs and their sources.
 - `.github/workflows/` holds the CI pipeline.
 
 ## Limitations

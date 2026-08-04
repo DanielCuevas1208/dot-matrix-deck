@@ -26,6 +26,11 @@ pub const Emulator = struct {
     }
 
     pub fn step(self: *Emulator) u16 {
+        if (self.bus.dma.active()) {
+            const cycles = self.bus.dmaStep();
+            self.total_cycles += cycles;
+            return cycles;
+        }
         const cycles = self.cpu.step(&self.bus);
         self.total_cycles += cycles;
         self.total_instructions += 1;
@@ -60,6 +65,7 @@ pub const Emulator = struct {
         self.bus.ppu = .{};
         self.bus.timer = .{};
         self.bus.joypad = .{};
+        self.bus.dma = .{};
         self.bus.serial_len = 0;
         self.total_cycles = 0;
         self.total_instructions = 0;

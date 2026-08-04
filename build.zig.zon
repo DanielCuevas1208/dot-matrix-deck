@@ -17,5 +17,6 @@
         "NOTICE",
         ".github",
         ".gitignore",
+        ".gitattributes",
     },
 }
