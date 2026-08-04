@@ -75,7 +75,11 @@ pub const Bus = struct {
             return;
         }
         switch (address) {
-            0xff00 => self.joypad.write(value),
+            0xff00 => {
+                const before = self.joypad.read() & 0x0f;
+                self.joypad.write(value);
+                self.raiseJoypadInterrupt(before);
+            },
             0xff01 => self.sb = value,
             0xff02 => {
                 self.sc = value;
@@ -123,18 +127,25 @@ pub const Bus = struct {
         self.iflag &= ~(@as(u8, 1) << bit);
     }
 
-    // A button press edge raises the joypad interrupt (IF bit 4).
+    // A visible button press edge raises the joypad interrupt (IF bit 4).
     pub fn setButton(self: *Bus, bit: Joypad.Button, pressed: bool) void {
-        const was_pressed = self.joypad.isButtonPressed(bit);
+        const before = self.joypad.read() & 0x0f;
         self.joypad.setButton(bit, pressed);
-        if (pressed and !was_pressed) self.iflag |= 0x10;
+        self.raiseJoypadInterrupt(before);
     }
 
-    // A direction press edge raises the joypad interrupt (IF bit 4).
+    // A visible direction press edge raises the joypad interrupt (IF bit 4).
     pub fn setDirection(self: *Bus, bit: Joypad.Direction, pressed: bool) void {
-        const was_pressed = self.joypad.isDirectionPressed(bit);
+        const before = self.joypad.read() & 0x0f;
         self.joypad.setDirection(bit, pressed);
-        if (pressed and !was_pressed) self.iflag |= 0x10;
+        self.raiseJoypadInterrupt(before);
+    }
+
+    // The joypad interrupt is a falling edge on the visible low nibble.
+    // Presses in an unselected column do not change that nibble.
+    fn raiseJoypadInterrupt(self: *Bus, before: u8) void {
+        const after = self.joypad.read() & 0x0f;
+        if ((before & ~after) != 0) self.iflag |= 0x10;
     }
 
     pub fn serialOutput(self: *const Bus) []const u8 {
@@ -149,17 +160,24 @@ test "joypad reads the selected button column" {
     var bus = try Bus.init(testing.allocator, &rom);
     defer bus.deinit();
     bus.write(0xff00, 0x10); // bit 5 low selects the buttons column.
+    try testing.expectEqual(@as(u8, 0x10), bus.read(0xff00) & 0x30);
     bus.setButton(Joypad.Button.a, true);
     try testing.expectEqual(@as(u8, 0x0e), bus.read(0xff00) & 0x0f);
 }
 
-test "joypad press edge raises the joypad interrupt" {
+test "joypad interrupt follows a visible falling edge" {
     const rom = [_]u8{0} ** 0x8000;
     var bus = try Bus.init(testing.allocator, &rom);
     defer bus.deinit();
-    bus.write(0xff00, 0x20); // bit 4 low selects the D-pad column.
+    bus.write(0xff0f, 0x00);
+    bus.write(0xff00, 0x30); // No column is selected.
     bus.setDirection(Joypad.Direction.right, true);
+    try testing.expectEqual(@as(u8, 0), bus.iflag & 0x10);
+    bus.write(0xff00, 0x20); // Selecting the held D-pad creates the edge.
     try testing.expectEqual(@as(u8, 0x10), bus.iflag & 0x10);
+    bus.write(0xff0f, 0x00);
+    bus.setDirection(Joypad.Direction.right, true); // No state change.
+    try testing.expectEqual(@as(u8, 0), bus.iflag & 0x10);
     bus.setDirection(Joypad.Direction.right, false);
     bus.setDirection(Joypad.Direction.right, true);
     try testing.expectEqual(@as(u8, 0x10), bus.iflag & 0x10);

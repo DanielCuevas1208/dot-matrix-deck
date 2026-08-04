@@ -42,6 +42,7 @@ The joypad uses the real register semantics.
 The select bits are active-low.
 A cleared bit selects a column.
 The register returns the stored select bits when read.
+The bus raises the joypad interrupt on a visible falling edge.
 
 ## Requirements
 

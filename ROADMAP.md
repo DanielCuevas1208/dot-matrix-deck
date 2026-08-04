@@ -16,7 +16,7 @@ DMA, cartridge banking, an assembler, save data, and bundled test ROMs.
 - Cartridge support for ROM-only, MBC1, MBC2, MBC3, and MBC5 images.
 - OAM DMA with cycle-accurate CPU blocking.
 - Headless ROM runner with cycle caps, traces, and verdicts.
-- Joypad device with active-low column selection and press-edge interrupts.
+- Joypad device with active-low column selection and visible falling-edge interrupts.
 - MBC3 real-time clock with halt, latch, and BCD seconds.
 - Battery-backed RAM saves for the headless runner and the windowed frontend.
 - SDL2 windowed frontend with a DMG-style shell and pause controls.
