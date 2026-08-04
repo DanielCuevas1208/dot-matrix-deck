@@ -24,7 +24,7 @@ The core splits into small modules with one job each.
 - `src/bus.zig` routes memory between the devices.
 - `src/timer.zig` models the game clock.
 - `src/ppu.zig` renders background, sprites, and the window.
-- `src/cartridge.zig` loads ROM-only, MBC1, MBC2, MBC3, and MBC5 images. It banks their memory and drives the MBC3 real-time clock.
+- `src/cartridge.zig` loads ROM-only, MBC1, MBC2, MBC3, and MBC5 images. It banks their memory and drives the MBC3 real-time clock. Battery-backed carts keep their RAM in a `.sav` file.
 - `src/dma.zig` copies pages into OAM with the correct timing.
 - `src/serial.zig` turns link-port bytes into test verdicts.
 - `src/joypad.zig` reports button state through the FF00 register.
@@ -97,7 +97,7 @@ Run a ROM without a window.
 zig build run-headless -- path/to/rom.gb
 ```
 
-Useful options are `--max-cycles N`, `--trace`, and `--expect pass|fail|any`.
+Useful options are `--max-cycles N`, `--trace`, `--expect pass|fail|any`, `--load-save <path>`, and `--save <path>`.
 The runner prints serial output and returns the verdict code.
 
 Run a ROM in the SDL2 frontend.
@@ -110,6 +110,31 @@ Keys: Z is A, X is B, Enter is Start, Shift is Select.
 Arrows move the d-pad.
 P pauses, R resets, F fast-forwards, ESC quits.
 
+## Save files
+
+Battery-backed cartridges keep their external RAM in a `.sav` file.
+The windowed frontend loads the file next to the ROM at start.
+It writes the file back when you quit.
+The headless runner keeps the files explicit.
+
+```text
+zig build run-headless -Dsdl2=off -- fixtures/roms/sram.gb --save /tmp/sram.sav
+zig build run-headless -Dsdl2=off -- fixtures/roms/sram.gb --load-save /tmp/sram.sav
+```
+
+Sample output from the second run:
+
+```text
+Loaded save data.
+Serial output:
+PASS
+Verdict: pass
+```
+
+The save file stores the external RAM bytes only.
+It matches the RAM size from the cartridge header.
+The MBC3 real-time clock state is not persisted.
+
 ## Generate fixtures
 
 Regenerate the bundled ROMs from their assembly sources.
@@ -120,7 +145,7 @@ zig build fixtures -Dsdl2=off
 
 Each `.asm` file in `fixtures/asm` becomes a `.gb` image in `fixtures/roms`.
 The round-trip tests keep those images in sync.
-The suite ships six ROMs:
+The suite ships seven ROMs:
 
 - `demo` renders the title and prints PASS.
 - `dma` copies a page into OAM and checks the result.
@@ -128,6 +153,7 @@ The suite ships six ROMs:
 - `mbc2` switches MBC2 banks and checks the internal RAM.
 - `mbc3` switches MBC3 banks, RAM banks, and the real-time clock.
 - `mbc5` switches MBC5 banks and RAM banks.
+- `sram` enables battery-backed RAM and verifies the save file round-trip.
 
 ## Test
 
@@ -161,6 +187,8 @@ The core starts at the post-boot state.
 It does not emulate the boot ROM.
 The MBC3 clock advances with the emulated cycle count.
 It does not follow the host clock.
+Save files store external RAM only.
+The MBC3 real-time clock state does not persist.
 
 ## License
 

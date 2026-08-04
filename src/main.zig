@@ -47,6 +47,7 @@ fn usage(program: []const u8) void {
         \\
         \\Keys: Z=A, X=B, Enter=Start, Shift=Select, arrows=d-pad.
         \\P pause, R reset, F fast forward, ESC quit.
+        \\Battery RAM loads from and saves to a .sav file next to the ROM.
         \\
     , .{program});
 }
@@ -59,6 +60,13 @@ fn readFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     const buffer = try allocator.alloc(u8, @intCast(size));
     _ = try file.readPositionalAll(io, buffer, 0);
     return buffer;
+}
+
+// A battery save file sits next to the ROM with a .sav extension.
+fn savePathFor(allocator: std.mem.Allocator, rom_path: []const u8) ![]u8 {
+    const extension = std.fs.path.extension(rom_path);
+    if (extension.len == 0) return std.fmt.allocPrint(allocator, "{s}.sav", .{rom_path});
+    return std.fmt.allocPrint(allocator, "{s}.sav", .{rom_path[0 .. rom_path.len - extension.len]});
 }
 
 fn sdlError(context: []const u8) noreturn {
@@ -165,6 +173,18 @@ pub fn main(init: std.process.Init) !void {
     var emulator = try Emulator.init(allocator, rom);
     defer emulator.deinit();
 
+    const save_path = try savePathFor(allocator, args.items[1]);
+    defer allocator.free(save_path);
+    var loaded = false;
+    if (emulator.loadSaveFile(io, std.Io.Dir.cwd(), save_path)) |ok| {
+        loaded = ok;
+    } else |err| {
+        std.debug.print("Could not load save file {s}: {s}\n", .{ save_path, @errorName(err) });
+    }
+    if (emulator.hasSaveData()) {
+        std.debug.print("{s}\n", .{if (loaded) "Loaded save data." else "No save data found; starting fresh."});
+    }
+
     var run_state = frontend.RunState{};
     var last_tick = c.SDL_GetTicks();
 
@@ -234,4 +254,8 @@ pub fn main(init: std.process.Init) !void {
         if (elapsed < frame_ms) c.SDL_Delay(frame_ms - elapsed);
         last_tick = now;
     }
+
+    emulator.saveSaveFile(io, std.Io.Dir.cwd(), save_path) catch |err| {
+        std.debug.print("Could not write save file {s}: {s}\n", .{ save_path, @errorName(err) });
+    };
 }

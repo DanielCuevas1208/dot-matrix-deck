@@ -36,6 +36,10 @@ jobs:
         run: git diff --exit-code -- fixtures
       - name: Demo ROM reports PASS
         run: zig build run-demo -Dsdl2=off
+      - name: Battery RAM save round-trip
+        run: |
+          zig build run-headless -Dsdl2=off -- fixtures/roms/sram.gb --save sram.sav
+          zig build run-headless -Dsdl2=off -- fixtures/roms/sram.gb --load-save sram.sav
       - name: Build headless tools
         run: zig build -Dsdl2=off
 

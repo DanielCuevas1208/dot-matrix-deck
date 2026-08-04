@@ -12,6 +12,8 @@ pub const Cartridge = struct {
     rom: []u8,
     ram: []u8,
     mapper: Mapper,
+    has_battery: bool = false,
+    ram_dirty: bool = false,
     rom_bank_low: u8 = 1,
     rom_bank_high: u8 = 0,
     ram_bank: u8 = 0,
@@ -31,10 +33,11 @@ pub const Cartridge = struct {
         const rom = try allocator.alloc(u8, image.len);
         std.mem.copyForwards(u8, rom, image);
         const mapper = mapperFor(image);
+        const battery = batteryFor(image);
         const ram_size: usize = if (mapper == .mbc2) 0x200 else externalRamSize(image);
         const ram = try allocator.alloc(u8, ram_size);
         @memset(ram, 0);
-        return .{ .allocator = allocator, .rom = rom, .ram = ram, .mapper = mapper };
+        return .{ .allocator = allocator, .rom = rom, .ram = ram, .mapper = mapper, .has_battery = battery };
     }
 
     pub fn deinit(self: *Cartridge) void {
@@ -82,6 +85,38 @@ pub const Cartridge = struct {
         self.refreshRtcRegs();
     }
 
+    // True when the cartridge carries battery-backed RAM.
+    pub fn hasBattery(self: *const Cartridge) bool {
+        return self.has_battery;
+    }
+
+    // True when external RAM holds writes not yet written to disk.
+    pub fn ramDirty(self: *const Cartridge) bool {
+        return self.ram_dirty;
+    }
+
+    // A battery-backed cartridge with unflushed RAM needs a save.
+    pub fn saveNeeded(self: *const Cartridge) bool {
+        return self.has_battery and self.ram_dirty;
+    }
+
+    pub fn markRamClean(self: *Cartridge) void {
+        self.ram_dirty = false;
+    }
+
+    // The external RAM bytes, stored verbatim in the .sav file.
+    pub fn saveData(self: *const Cartridge) []const u8 {
+        return self.ram;
+    }
+
+    // Restores external RAM from a .sav file. The file size must match the
+    // cartridge RAM size exactly.
+    pub fn loadSaveData(self: *Cartridge, bytes: []const u8) !void {
+        if (bytes.len != self.ram.len) return error.SaveSizeMismatch;
+        @memcpy(self.ram, bytes);
+        self.markRamClean();
+    }
+
     fn mapperFor(image: []const u8) Mapper {
         if (image.len <= 0x147) return .rom_only;
         return switch (image[0x147]) {
@@ -90,6 +125,16 @@ pub const Cartridge = struct {
             0x0f...0x13 => .mbc3,
             0x19...0x1e => .mbc5,
             else => .rom_only,
+        };
+    }
+
+    // The cartridge type byte marks battery-backed carts. Save files only
+    // make sense for these images.
+    fn batteryFor(image: []const u8) bool {
+        if (image.len <= 0x147) return false;
+        return switch (image[0x147]) {
+            0x03, 0x06, 0x0f, 0x10, 0x13, 0x1b, 0x1e => true,
+            else => false,
         };
     }
 
@@ -198,11 +243,15 @@ pub const Cartridge = struct {
             .mbc1 => {
                 var index = raw - 0xa000;
                 if (self.banking_mode == 1) index += @as(usize, self.rom_bank_high) * 0x2000;
-                if (index < self.ram.len) self.ram[index] = value;
+                if (index < self.ram.len) {
+                    self.ram[index] = value;
+                    self.ram_dirty = true;
+                }
             },
             .mbc2 => {
                 const index = self.mbc2RamIndex(raw);
                 self.ram[index] = value & 0x0f;
+                self.ram_dirty = true;
             },
             .mbc3 => {
                 if (self.ram_bank >= 8 and self.ram_bank <= 0x0c) {
@@ -210,11 +259,17 @@ pub const Cartridge = struct {
                     return;
                 }
                 const index = @as(usize, self.ram_bank & 0x03) * 0x2000 + (raw - 0xa000);
-                if (index < self.ram.len) self.ram[index] = value;
+                if (index < self.ram.len) {
+                    self.ram[index] = value;
+                    self.ram_dirty = true;
+                }
             },
             .mbc5 => {
                 const index = @as(usize, self.ram_bank & 0x0f) * 0x2000 + (raw - 0xa000);
-                if (index < self.ram.len) self.ram[index] = value;
+                if (index < self.ram.len) {
+                    self.ram[index] = value;
+                    self.ram_dirty = true;
+                }
             },
             .rom_only => {},
         }
@@ -590,4 +645,83 @@ test "MBC5 banks external RAM up to 16 banks" {
 
     cartridge.write(0x4000, 0x03);
     try testing.expectEqual(@as(u8, 0x42), cartridge.read(0xa000));
+}
+
+test "battery flag matches the cartridge type byte" {
+    const cases = [_]struct { byte: u8, battery: bool }{
+        .{ .byte = 0x00, .battery = false },
+        .{ .byte = 0x01, .battery = false },
+        .{ .byte = 0x03, .battery = true },
+        .{ .byte = 0x06, .battery = true },
+        .{ .byte = 0x0f, .battery = true },
+        .{ .byte = 0x12, .battery = false },
+        .{ .byte = 0x13, .battery = true },
+        .{ .byte = 0x1b, .battery = true },
+        .{ .byte = 0x1e, .battery = true },
+    };
+    for (cases) |case| {
+        var image: [0x8000]u8 = [_]u8{0} ** 0x8000;
+        image[0x147] = case.byte;
+        var cartridge = try Cartridge.init(testing.allocator, &image);
+        defer cartridge.deinit();
+        try testing.expectEqual(case.battery, cartridge.hasBattery());
+    }
+}
+
+test "external RAM writes mark the save dirty" {
+    var image: [0x40000]u8 = [_]u8{0} ** 0x40000;
+    image[0x147] = 0x03; // MBC1 + RAM + battery
+    image[0x149] = 0x03; // 32KB external RAM
+    var cartridge = try Cartridge.init(testing.allocator, &image);
+    defer cartridge.deinit();
+
+    try testing.expect(!cartridge.saveNeeded());
+    // RAM disabled: writes are dropped and stay clean.
+    cartridge.write(0xa000, 0x42);
+    try testing.expect(!cartridge.ramDirty());
+
+    cartridge.write(0x0000, 0x0a);
+    cartridge.write(0xa000, 0x42);
+    try testing.expect(cartridge.saveNeeded());
+
+    cartridge.markRamClean();
+    try testing.expect(!cartridge.saveNeeded());
+}
+
+test "cart without battery never needs a save" {
+    const image = try romOnlyImage(testing.allocator);
+    defer testing.allocator.free(image);
+    var cartridge = try Cartridge.init(testing.allocator, image);
+    defer cartridge.deinit();
+    cartridge.write(0xa000, 0x42);
+    try testing.expect(!cartridge.saveNeeded());
+}
+
+test "save data round-trips through loadSaveData" {
+    const image = try mbc1Image(testing.allocator);
+    defer testing.allocator.free(image);
+    var cartridge = try Cartridge.init(testing.allocator, image);
+    defer cartridge.deinit();
+
+    cartridge.write(0x0000, 0x0a);
+    cartridge.write(0xa000, 0x11);
+    cartridge.write(0xa001, 0x22);
+    const saved = try testing.allocator.dupe(u8, cartridge.saveData());
+    defer testing.allocator.free(saved);
+
+    var reloaded = try Cartridge.init(testing.allocator, image);
+    defer reloaded.deinit();
+    try reloaded.loadSaveData(saved);
+    reloaded.write(0x0000, 0x0a);
+    try testing.expectEqual(@as(u8, 0x11), reloaded.read(0xa000));
+    try testing.expectEqual(@as(u8, 0x22), reloaded.read(0xa001));
+}
+
+test "save data rejects a size mismatch" {
+    const image = try mbc1Image(testing.allocator);
+    defer testing.allocator.free(image);
+    var cartridge = try Cartridge.init(testing.allocator, image);
+    defer cartridge.deinit();
+    const short = [_]u8{0x00} ** 4;
+    try testing.expectError(error.SaveSizeMismatch, cartridge.loadSaveData(&short));
 }
