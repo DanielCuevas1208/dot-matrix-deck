@@ -20,6 +20,7 @@ DMA, cartridge banking, an assembler, save data, and bundled test ROMs.
 - MBC3 real-time clock with halt, latch, and BCD seconds.
 - Battery-backed RAM saves for the headless runner and the windowed frontend.
 - SDL2 windowed frontend with a DMG-style shell and pause controls.
+- Configurable key bindings for the windowed frontend via a `dmd.keys.conf` file.
 - SM83 assembler with labels, data directives, and expressions.
 - Bundled demo, DMA, banking, MBC2, MBC3, MBC5, and SRAM ROMs that report PASS.
 - Deterministic unit tests for every core module.
@@ -30,7 +31,6 @@ DMA, cartridge banking, an assembler, save data, and bundled test ROMs.
 - Cycle-accurate timing for the timer and the PPU STAT modes.
 - Serial link emulation between two emulator instances.
 - Audio processing unit (APU).
-- Configurable key bindings for the windowed frontend.
 - A debugger overlay for pause and reset.
 
 ## Known limits

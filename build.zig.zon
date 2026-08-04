@@ -18,5 +18,6 @@
         ".github",
         ".gitignore",
         ".gitattributes",
+        "dmd.keys.conf",
     },
 }

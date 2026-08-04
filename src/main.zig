@@ -12,29 +12,34 @@ const frame_cap: u64 = 1 << 24;
 const frame_ms: u32 = 16;
 const fast_forward_frames: u32 = 4;
 
+const default_key_config = "dmd.keys.conf";
+
 const ScancodeKey = struct {
     scancode: c.SDL_Scancode,
     key: frontend.Key,
 };
 
-const scancode_map = [_]ScancodeKey{
-    .{ .scancode = c.SDL_SCANCODE_RIGHT, .key = .right },
-    .{ .scancode = c.SDL_SCANCODE_LEFT, .key = .left },
-    .{ .scancode = c.SDL_SCANCODE_UP, .key = .up },
-    .{ .scancode = c.SDL_SCANCODE_DOWN, .key = .down },
-    .{ .scancode = c.SDL_SCANCODE_Z, .key = .a },
-    .{ .scancode = c.SDL_SCANCODE_X, .key = .b },
-    .{ .scancode = c.SDL_SCANCODE_RSHIFT, .key = .select },
-    .{ .scancode = c.SDL_SCANCODE_LSHIFT, .key = .select },
-    .{ .scancode = c.SDL_SCANCODE_RETURN, .key = .start },
-    .{ .scancode = c.SDL_SCANCODE_P, .key = .pause },
-    .{ .scancode = c.SDL_SCANCODE_R, .key = .reset },
-    .{ .scancode = c.SDL_SCANCODE_F, .key = .fast_forward },
-};
+// Resolves scancode names from the key map into SDL scancodes. Each name
+// comes from the SDL scancode vocabulary, for example "z" or "left shift".
+fn resolveKeyMap(allocator: std.mem.Allocator, bindings: []const frontend.KeyBinding) ![]ScancodeKey {
+    var resolved: std.ArrayListUnmanaged(ScancodeKey) = .empty;
+    errdefer resolved.deinit(allocator);
+    for (bindings) |binding| {
+        const name = try allocator.dupeZ(u8, binding.scancode_name);
+        defer allocator.free(name);
+        const scancode = c.SDL_GetScancodeFromName(name.ptr);
+        if (scancode == c.SDL_SCANCODE_UNKNOWN) {
+            std.debug.print("Unknown key name in config: {s}\n", .{binding.scancode_name});
+            return error.UnknownKeyName;
+        }
+        try resolved.append(allocator, .{ .scancode = scancode, .key = binding.key });
+    }
+    return resolved.toOwnedSlice(allocator);
+}
 
-fn keyFor(scancode: c.SDL_Scancode) ?frontend.Key {
-    for (scancode_map) |mapping| {
-        if (mapping.scancode == scancode) return mapping.key;
+fn keyFor(resolved: []const ScancodeKey, scancode: c.SDL_Scancode) ?frontend.Key {
+    for (resolved) |entry| {
+        if (entry.scancode == scancode) return entry.key;
     }
     return null;
 }
@@ -43,11 +48,13 @@ fn usage(program: []const u8) void {
     std.debug.print(
         \\Dot Matrix Deck - SDL2 windowed frontend
         \\Usage:
-        \\  {s} <rom.gb>
+        \\  {s} <rom.gb> [--keys <path>]
         \\
         \\Keys: Z=A, X=B, Enter=Start, Shift=Select, arrows=d-pad.
         \\P pause, R reset, F fast forward, ESC quit.
         \\Battery RAM loads from and saves to a .sav file next to the ROM.
+        \\Key bindings load from dmd.keys.conf in the working directory.
+        \\Pass --keys to use another config file instead.
         \\
     , .{program});
 }
@@ -60,6 +67,20 @@ fn readFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     const buffer = try allocator.alloc(u8, @intCast(size));
     _ = try file.readPositionalAll(io, buffer, 0);
     return buffer;
+}
+
+// Reads the key config file. When the path is explicit and the file is
+// missing, returns an error. When no path is given and the default file
+// is missing, returns null so the built-in defaults apply.
+fn loadKeyConfig(io: std.Io, allocator: std.mem.Allocator, keys_path: ?[]const u8) !?[]u8 {
+    const path = keys_path orelse default_key_config;
+    const dir = std.Io.Dir.cwd();
+    if (dir.access(io, path, .{})) |_| {
+        return try readFile(io, allocator, path);
+    } else |_| {
+        if (keys_path != null) return error.MissingKeyConfig;
+        return null;
+    }
 }
 
 // A battery save file sits next to the ROM with a .sav extension.
@@ -114,14 +135,14 @@ fn drawPixelGrid(renderer: *c.SDL_Renderer) void {
 }
 
 // Re-applies held keys after a reset so the joypad state stays in sync.
-fn syncHeldKeys(emulator: *Emulator) void {
+fn syncHeldKeys(emulator: *Emulator, resolved: []const ScancodeKey) void {
     const keyboard = c.SDL_GetKeyboardState(null);
-    for (scancode_map) |mapping| {
-        _ = frontend.applyKey(&emulator.bus, mapping.key, false);
+    for (resolved) |entry| {
+        _ = frontend.applyKey(&emulator.bus, entry.key, false);
     }
-    for (scancode_map) |mapping| {
-        const down = keyboard[mapping.scancode] != 0;
-        _ = frontend.applyKey(&emulator.bus, mapping.key, down);
+    for (resolved) |entry| {
+        const down = keyboard[entry.scancode] != 0;
+        _ = frontend.applyKey(&emulator.bus, entry.key, down);
     }
 }
 
@@ -136,13 +157,61 @@ pub fn main(init: std.process.Init) !void {
     defer args.deinit(allocator);
     while (it.next()) |arg| try args.append(allocator, arg);
 
-    if (args.items.len != 2) {
+    var keys_path: ?[]const u8 = null;
+    var rom_path: ?[]const u8 = null;
+    var index: usize = 1;
+    while (index < args.items.len) : (index += 1) {
+        const arg = args.items[index];
+        if (std.mem.eql(u8, arg, "--keys")) {
+            index += 1;
+            if (index >= args.items.len) {
+                std.debug.print("--keys needs a path\n", .{});
+                std.process.exit(2);
+            }
+            keys_path = args.items[index];
+        } else if (rom_path == null) {
+            rom_path = arg;
+        } else {
+            usage(args.items[0]);
+            std.process.exit(2);
+        }
+    }
+
+    if (rom_path == null) {
         usage(args.items[0]);
         std.process.exit(2);
     }
 
-    const rom = try readFile(io, allocator, args.items[1]);
+    const rom = try readFile(io, allocator, rom_path.?);
     defer allocator.free(rom);
+
+    const key_text = loadKeyConfig(io, allocator, keys_path) catch |err| {
+        std.debug.print("Could not read key config: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
+    defer if (key_text) |text| allocator.free(text);
+
+    var bindings: []const frontend.KeyBinding = frontend.defaultKeyMap();
+    var bindings_owned = false;
+    if (key_text) |text| {
+        const overrides = frontend.parseKeyMap(allocator, text) catch |err| {
+            std.debug.print("Bad key config: {s}\n", .{@errorName(err)});
+            std.process.exit(1);
+        };
+        defer allocator.free(overrides);
+        bindings = frontend.mergeKeyMap(allocator, overrides) catch |err| {
+            std.debug.print("Bad key config: {s}\n", .{@errorName(err)});
+            std.process.exit(1);
+        };
+        bindings_owned = true;
+    }
+    defer if (bindings_owned) allocator.free(bindings);
+
+    const resolved = resolveKeyMap(allocator, bindings) catch |err| {
+        std.debug.print("Bad key config: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
+    defer allocator.free(resolved);
 
     if (c.SDL_Init(c.SDL_INIT_VIDEO) != 0) sdlError("SDL_Init failed");
     defer c.SDL_Quit();
@@ -173,7 +242,7 @@ pub fn main(init: std.process.Init) !void {
     var emulator = try Emulator.init(allocator, rom);
     defer emulator.deinit();
 
-    const save_path = try savePathFor(allocator, args.items[1]);
+    const save_path = try savePathFor(allocator, rom_path.?);
     defer allocator.free(save_path);
     var loaded = false;
     if (emulator.loadSaveFile(io, std.Io.Dir.cwd(), save_path)) |ok| {
@@ -200,20 +269,20 @@ pub fn main(init: std.process.Init) !void {
                         run_state.running = false;
                         break;
                     }
-                    const key = keyFor(scancode) orelse continue;
+                    const key = keyFor(resolved, scancode) orelse continue;
                     switch (key) {
                         .pause => run_state.togglePause(),
                         .fast_forward => run_state.toggleFastForward(),
                         .reset => {
                             emulator.reset();
-                            syncHeldKeys(&emulator);
+                            syncHeldKeys(&emulator, resolved);
                         },
                         else => _ = frontend.applyKey(&emulator.bus, key, true),
                     }
                 },
                 c.SDL_KEYUP => {
                     if (event.key.repeat != 0) break;
-                    const key = keyFor(event.key.keysym.scancode) orelse continue;
+                    const key = keyFor(resolved, event.key.keysym.scancode) orelse continue;
                     _ = frontend.applyKey(&emulator.bus, key, false);
                 },
                 else => {},

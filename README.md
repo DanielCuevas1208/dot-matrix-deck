@@ -24,7 +24,9 @@ The core splits into small modules with one job each.
 - `src/bus.zig` routes memory between the devices.
 - `src/timer.zig` models the game clock.
 - `src/ppu.zig` renders background, sprites, and the window.
-- `src/cartridge.zig` loads ROM-only, MBC1, MBC2, MBC3, and MBC5 images. It banks their memory and drives the MBC3 real-time clock. Battery-backed carts keep their RAM in a `.sav` file.
+- `src/cartridge.zig` loads ROM-only, MBC1, MBC2, MBC3, and MBC5 images.
+  It banks memory and drives the MBC3 real-time clock.
+  Battery-backed carts keep RAM in a `.sav` file.
 - `src/dma.zig` copies pages into OAM with the correct timing.
 - `src/serial.zig` turns link-port bytes into test verdicts.
 - `src/joypad.zig` reports button state through the FF00 register.
@@ -106,9 +108,37 @@ Run a ROM in the SDL2 frontend.
 zig build run -- path/to/rom.gb
 ```
 
-Keys: Z is A, X is B, Enter is Start, Shift is Select.
+The built-in key map uses Z for A, X for B, Enter for Start, and Shift for Select.
 Arrows move the d-pad.
-P pauses, R resets, F fast-forwards, ESC quits.
+P pauses, R resets, F fast-forwards, and ESC quits.
+See "Key bindings" below to change the map.
+
+## Key bindings
+
+The key map is configurable.
+Create a file named `dmd.keys.conf` in the working directory.
+The frontend loads it at start.
+The repository ships a `dmd.keys.conf` that matches the built-in map.
+
+Each line maps one logical key to one or more physical keys.
+Each line overrides one logical key.
+Omitted keys keep the built-in bindings.
+
+```text
+a = z
+select = left shift, right shift
+```
+
+Physical keys use SDL scancode names.
+Examples are `z`, `return`, `up`, and `left shift`.
+Lines that start with `#` are comments.
+Blank lines are ignored.
+
+Pass `--keys <path>` to load another file.
+
+```text
+zig build run -- path/to/rom.gb --keys my-keys.conf
+```
 
 ## Save files
 

@@ -86,6 +86,81 @@ pub fn applyKey(bus: *Bus, key: Key, pressed: bool) bool {
     return false;
 }
 
+// A physical key bound to a logical key. The physical key is an SDL
+// scancode name such as "z", "return", or "left shift". Keeping SDL out
+// of this file lets the parser and defaults run in headless tests.
+pub const KeyBinding = struct {
+    key: Key,
+    scancode_name: []const u8,
+};
+
+// The built-in bindings. A config file overrides only named logical keys.
+pub fn defaultKeyMap() []const KeyBinding {
+    return &[_]KeyBinding{
+        .{ .key = .a, .scancode_name = "z" },
+        .{ .key = .b, .scancode_name = "x" },
+        .{ .key = .select, .scancode_name = "left shift" },
+        .{ .key = .select, .scancode_name = "right shift" },
+        .{ .key = .start, .scancode_name = "return" },
+        .{ .key = .right, .scancode_name = "right" },
+        .{ .key = .left, .scancode_name = "left" },
+        .{ .key = .up, .scancode_name = "up" },
+        .{ .key = .down, .scancode_name = "down" },
+        .{ .key = .pause, .scancode_name = "p" },
+        .{ .key = .reset, .scancode_name = "r" },
+        .{ .key = .fast_forward, .scancode_name = "f" },
+    };
+}
+
+// Returns the logical key bound to a physical key, or null.
+pub fn keyForScancodeName(map: []const KeyBinding, name: []const u8) ?Key {
+    for (map) |binding| {
+        if (std.mem.eql(u8, binding.scancode_name, name)) return binding.key;
+    }
+    return null;
+}
+
+pub const KeyConfigError = error{
+    ExpectedEquals,
+    UnknownKey,
+    DuplicateKey,
+    DuplicateScancode,
+    EmptyBinding,
+};
+
+// Parses a key config file into bindings. Each line maps a logical key to
+// one or more comma-separated SDL scancode names. Blank lines and lines
+// that start with '#' are ignored. The returned bindings point into the
+// input text, so the caller must keep the text alive.
+pub fn parseKeyMap(allocator: std.mem.Allocator, text: []const u8) ![]KeyBinding {
+    var entries: std.ArrayListUnmanaged(KeyBinding) = .empty;
+    errdefer entries.deinit(allocator);
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        const equals = std.mem.indexOfScalar(u8, line, '=') orelse return error.ExpectedEquals;
+        const key = std.meta.stringToEnum(Key, std.mem.trim(u8, line[0..equals], " \t")) orelse
+            return error.UnknownKey;
+        for (entries.items) |existing| {
+            if (existing.key == key) return error.DuplicateKey;
+        }
+        var assigned = false;
+        var names = std.mem.splitScalar(u8, line[equals + 1 ..], ',');
+        while (names.next()) |raw_name| {
+            const name = std.mem.trim(u8, raw_name, " \t\r");
+            if (name.len == 0) continue;
+            for (entries.items) |existing| {
+                if (std.mem.eql(u8, existing.scancode_name, name)) return error.DuplicateScancode;
+            }
+            try entries.append(allocator, .{ .key = key, .scancode_name = name });
+            assigned = true;
+        }
+        if (!assigned) return error.EmptyBinding;
+    }
+    return entries.toOwnedSlice(allocator);
+}
+
 // DMG-inspired presentation palette. The frame stores 0xAARRGGBB values.
 pub const palette = struct {
     pub const shell: u32 = 0xffd9d9b8;
@@ -157,4 +232,116 @@ test "run state toggles stay independent" {
     state.toggleFastForward();
     try testing.expect(state.fast_forward);
     try testing.expect(state.running);
+}
+
+test "default key map covers every logical key" {
+    var seen = [_]bool{false} ** @as(usize, @typeInfo(Key).@"enum".fields.len);
+    for (defaultKeyMap()) |binding| {
+        seen[@intFromEnum(binding.key)] = true;
+    }
+    for (seen) |present| try testing.expect(present);
+}
+
+test "default key map keeps the arrow and shift defaults" {
+    const map = defaultKeyMap();
+    try testing.expectEqual(@as(Key, .a), keyForScancodeName(map, "z").?);
+    try testing.expectEqual(@as(Key, .select), keyForScancodeName(map, "left shift").?);
+    try testing.expectEqual(@as(Key, .select), keyForScancodeName(map, "right shift").?);
+    try testing.expectEqual(@as(Key, .up), keyForScancodeName(map, "up").?);
+    try testing.expectEqual(@as(Key, .reset), keyForScancodeName(map, "r").?);
+    try testing.expectEqual(@as(?Key, null), keyForScancodeName(map, "k"));
+}
+
+test "key config parses comments, blanks, and key lists" {
+    const text =
+        \\# custom bindings
+        \\a = k
+        \\select = left shift, right shift
+        \\start = space
+        \\right = w
+        \\
+        \\left = a
+    ;
+    const parsed = try parseKeyMap(testing.allocator, text);
+    defer testing.allocator.free(parsed);
+    try testing.expectEqual(@as(usize, 6), parsed.len);
+    try testing.expectEqual(@as(Key, .a), keyForScancodeName(parsed, "k").?);
+    try testing.expectEqual(@as(Key, .select), keyForScancodeName(parsed, "right shift").?);
+    try testing.expectEqual(@as(Key, .start), keyForScancodeName(parsed, "space").?);
+    try testing.expectEqual(@as(Key, .right), keyForScancodeName(parsed, "w").?);
+    try testing.expectEqual(@as(Key, .left), keyForScancodeName(parsed, "a").?);
+    try testing.expectEqual(@as(?Key, null), keyForScancodeName(parsed, "z"));
+}
+
+test "remapped key config drives the joypad" {
+    const text = "b = k\n";
+    const parsed = try parseKeyMap(testing.allocator, text);
+    defer testing.allocator.free(parsed);
+    var bus = try testBus();
+    defer bus.deinit();
+    const key = keyForScancodeName(parsed, "k").?;
+    try testing.expect(applyKey(&bus, key, true));
+    try testing.expect(bus.joypad.isButtonPressed(Joypad.Button.b));
+}
+
+test "key config rejects malformed lines" {
+    try testing.expectError(error.ExpectedEquals, parseKeyMap(testing.allocator, "a z\n"));
+    try testing.expectError(error.UnknownKey, parseKeyMap(testing.allocator, "turbo = z\n"));
+    try testing.expectError(error.DuplicateKey, parseKeyMap(testing.allocator, "a = z\na = x\n"));
+    try testing.expectError(error.DuplicateScancode, parseKeyMap(testing.allocator, "a = z\nb = z\n"));
+    try testing.expectError(error.EmptyBinding, parseKeyMap(testing.allocator, "a =\n"));
+}
+
+test "key config rejects an empty file without error" {
+    const parsed = try parseKeyMap(testing.allocator, "# nothing\n\n");
+    defer testing.allocator.free(parsed);
+    try testing.expectEqual(@as(usize, 0), parsed.len);
+}
+
+// Combines partial overrides with the built-in map. The returned bindings
+// point into the override text, so the caller must keep that text alive.
+pub fn mergeKeyMap(allocator: std.mem.Allocator, overrides: []const KeyBinding) ![]KeyBinding {
+    var merged: std.ArrayListUnmanaged(KeyBinding) = .empty;
+    errdefer merged.deinit(allocator);
+
+    for (defaultKeyMap()) |binding| {
+        var overridden = false;
+        for (overrides) |override| {
+            if (override.key == binding.key) {
+                overridden = true;
+                break;
+            }
+        }
+        if (!overridden) try merged.append(allocator, binding);
+    }
+    for (overrides) |override| try merged.append(allocator, override);
+
+    for (merged.items, 0..) |binding, index| {
+        for (merged.items[index + 1 ..]) |other| {
+            if (std.mem.eql(u8, binding.scancode_name, other.scancode_name)) {
+                return error.DuplicateScancode;
+            }
+        }
+    }
+    return merged.toOwnedSlice(allocator);
+}
+
+test "partial key config keeps unspecified defaults" {
+    const overrides = try parseKeyMap(testing.allocator, "a = k\nselect = space\n");
+    defer testing.allocator.free(overrides);
+    const merged = try mergeKeyMap(testing.allocator, overrides);
+    defer testing.allocator.free(merged);
+
+    try testing.expectEqual(@as(Key, .a), keyForScancodeName(merged, "k").?);
+    try testing.expectEqual(@as(?Key, null), keyForScancodeName(merged, "z"));
+    try testing.expectEqual(@as(Key, .b), keyForScancodeName(merged, "x").?);
+    try testing.expectEqual(@as(Key, .select), keyForScancodeName(merged, "space").?);
+    try testing.expectEqual(@as(?Key, null), keyForScancodeName(merged, "left shift"));
+    try testing.expectEqual(@as(Key, .start), keyForScancodeName(merged, "return").?);
+}
+
+test "merged key config rejects a physical key collision" {
+    const overrides = try parseKeyMap(testing.allocator, "a = x\n");
+    defer testing.allocator.free(overrides);
+    try testing.expectError(error.DuplicateScancode, mergeKeyMap(testing.allocator, overrides));
 }
