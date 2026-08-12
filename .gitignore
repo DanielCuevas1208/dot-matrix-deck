@@ -1,5 +1,6 @@
 .zig-cache/
 .zig-global-cache/
+.zig-global-cache-*/
 zig-out/
 *.o
 *.obj

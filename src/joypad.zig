@@ -8,9 +8,15 @@
 const std = @import("std");
 
 pub const Joypad = struct {
+    const dpad_select_bit: u8 = 0x10;
+    const button_select_bit: u8 = 0x20;
+    const select_mask: u8 = dpad_select_bit | button_select_bit;
+    const register_high_bits: u8 = 0xc0;
+    const released_nibble: u8 = 0x0f;
+
     buttons: u8 = 0x0f,
     dpad: u8 = 0x0f,
-    select: u8 = 0x30,
+    select: u8 = select_mask,
 
     // Low-nibble bit positions, active low.
     pub const Button = enum(u3) { a = 0, b = 1, select = 2, start = 3 };
@@ -39,15 +45,20 @@ pub const Joypad = struct {
     // A cleared bit 4 activates the D-pad; a cleared bit 5 activates the
     // buttons. Unselected columns report 1 (released).
     pub fn read(self: *const Joypad) u8 {
-        var value: u8 = 0x0f;
-        if ((self.select & 0x10) == 0) value &= self.dpad;
-        if ((self.select & 0x20) == 0) value &= self.buttons;
-        return 0xc0 | (self.select & 0x30) | value;
+        var value: u8 = released_nibble;
+        if (self.columnSelected(dpad_select_bit)) value &= self.dpad;
+        if (self.columnSelected(button_select_bit)) value &= self.buttons;
+        return register_high_bits | (self.select & select_mask) | value;
     }
 
     // Writing FF00. Only the two select bits are stored.
     pub fn write(self: *Joypad, value: u8) void {
-        self.select = value & 0x30;
+        self.select = value & select_mask;
+    }
+
+    fn columnSelected(self: *const Joypad, bit: u8) bool {
+        // The hardware uses active-low column selection.
+        return (self.select & bit) == 0;
     }
 };
 
@@ -63,8 +74,16 @@ test "reading returns the stored select bits" {
     var joypad = Joypad{};
     joypad.write(0x20);
     try testing.expectEqual(@as(u8, 0x20), joypad.read() & 0x30);
+    try testing.expectEqual(@as(u8, 0xef), joypad.read());
     joypad.write(0x10);
     try testing.expectEqual(@as(u8, 0x10), joypad.read() & 0x30);
+    try testing.expectEqual(@as(u8, 0xdf), joypad.read());
+}
+
+test "writes ignore unrelated register bits" {
+    var joypad = Joypad{};
+    joypad.write(0x8f);
+    try testing.expectEqual(@as(u8, 0xcf), joypad.read());
 }
 
 test "buttons column reflects pressed keys" {

@@ -6,6 +6,7 @@ This document tracks what the project delivers and what remains.
 
 Release 0.2 makes the emulator a usable workbench. It adds input,
 DMA, cartridge banking, an assembler, save data, and bundled test ROMs.
+The listed 0.2 scope is complete.
 
 ### Done
 
