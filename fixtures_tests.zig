@@ -17,12 +17,29 @@ const Fixture = struct {
 const fixtures = [_]Fixture{
     .{ .name = "demo", .source = @embedFile("fixtures/asm/demo.asm"), .image = @embedFile("fixtures/roms/demo.gb") },
     .{ .name = "dma", .source = @embedFile("fixtures/asm/dma.asm"), .image = @embedFile("fixtures/roms/dma.gb") },
+    .{ .name = "joypad", .source = @embedFile("fixtures/asm/joypad.asm"), .image = @embedFile("fixtures/roms/joypad.gb") },
     .{ .name = "banking", .source = @embedFile("fixtures/asm/banking.asm"), .image = @embedFile("fixtures/roms/banking.gb") },
     .{ .name = "mbc2", .source = @embedFile("fixtures/asm/mbc2.asm"), .image = @embedFile("fixtures/roms/mbc2.gb") },
     .{ .name = "mbc3", .source = @embedFile("fixtures/asm/mbc3.asm"), .image = @embedFile("fixtures/roms/mbc3.gb") },
     .{ .name = "mbc5", .source = @embedFile("fixtures/asm/mbc5.asm"), .image = @embedFile("fixtures/roms/mbc5.gb") },
     .{ .name = "sram", .source = @embedFile("fixtures/asm/sram.asm"), .image = @embedFile("fixtures/roms/sram.gb") },
 };
+
+fn fixtureNamed(comptime name: []const u8) Fixture {
+    inline for (fixtures) |fixture| {
+        if (comptime std.mem.eql(u8, fixture.name, name)) return fixture;
+    }
+    @compileError("unknown fixture name");
+}
+
+fn expectFixturePass(fixture: Fixture) !void {
+    var emulator = try Emulator.init(std.testing.allocator, fixture.image);
+    defer emulator.deinit();
+
+    var frame_index: u32 = 0;
+    while (frame_index < 40) : (frame_index += 1) emulator.runFrame(1 << 24);
+    try std.testing.expect(std.mem.indexOf(u8, emulator.serialOutput(), "PASS") != null);
+}
 
 test "fixture images round-trip byte for byte" {
     for (fixtures) |fixture| {
@@ -35,7 +52,7 @@ test "fixture images round-trip byte for byte" {
 }
 
 test "demo ROM renders frames and reports PASS" {
-    const fixture = fixtures[0];
+    const fixture = fixtureNamed("demo");
     var emulator = try Emulator.init(std.testing.allocator, fixture.image);
     defer emulator.deinit();
 
@@ -52,52 +69,41 @@ test "demo ROM renders frames and reports PASS" {
 }
 
 test "DMA ROM reports PASS" {
-    const fixture = fixtures[1];
-    var emulator = try Emulator.init(std.testing.allocator, fixture.image);
+    try expectFixturePass(fixtureNamed("dma"));
+}
+
+test "joypad ROM reports PASS" {
+    try expectFixturePass(fixtureNamed("joypad"));
+}
+
+test "joypad button press is visible through FF00" {
+    const Joypad = @import("src/joypad.zig").Joypad;
+    const rom = [_]u8{0} ** 0x8000;
+    var emulator = try Emulator.init(std.testing.allocator, &rom);
     defer emulator.deinit();
-    var frame_index: u32 = 0;
-    while (frame_index < 40) : (frame_index += 1) emulator.runFrame(1 << 24);
-    try std.testing.expect(std.mem.indexOf(u8, emulator.serialOutput(), "PASS") != null);
+    emulator.bus.write(0xff00, 0x10);
+    emulator.bus.setButton(Joypad.Button.a, true);
+    try std.testing.expectEqual(@as(u8, 0x0e), emulator.bus.read(0xff00) & 0x0f);
 }
 
 test "banking ROM reports PASS" {
-    const fixture = fixtures[2];
-    var emulator = try Emulator.init(std.testing.allocator, fixture.image);
-    defer emulator.deinit();
-    var frame_index: u32 = 0;
-    while (frame_index < 40) : (frame_index += 1) emulator.runFrame(1 << 24);
-    try std.testing.expect(std.mem.indexOf(u8, emulator.serialOutput(), "PASS") != null);
+    try expectFixturePass(fixtureNamed("banking"));
 }
 
 test "MBC2 ROM reports PASS" {
-    const fixture = fixtures[3];
-    var emulator = try Emulator.init(std.testing.allocator, fixture.image);
-    defer emulator.deinit();
-    var frame_index: u32 = 0;
-    while (frame_index < 40) : (frame_index += 1) emulator.runFrame(1 << 24);
-    try std.testing.expect(std.mem.indexOf(u8, emulator.serialOutput(), "PASS") != null);
+    try expectFixturePass(fixtureNamed("mbc2"));
 }
 
 test "MBC3 ROM reports PASS" {
-    const fixture = fixtures[4];
-    var emulator = try Emulator.init(std.testing.allocator, fixture.image);
-    defer emulator.deinit();
-    var frame_index: u32 = 0;
-    while (frame_index < 40) : (frame_index += 1) emulator.runFrame(1 << 24);
-    try std.testing.expect(std.mem.indexOf(u8, emulator.serialOutput(), "PASS") != null);
+    try expectFixturePass(fixtureNamed("mbc3"));
 }
 
 test "MBC5 ROM reports PASS" {
-    const fixture = fixtures[5];
-    var emulator = try Emulator.init(std.testing.allocator, fixture.image);
-    defer emulator.deinit();
-    var frame_index: u32 = 0;
-    while (frame_index < 40) : (frame_index += 1) emulator.runFrame(1 << 24);
-    try std.testing.expect(std.mem.indexOf(u8, emulator.serialOutput(), "PASS") != null);
+    try expectFixturePass(fixtureNamed("mbc5"));
 }
 
 test "SRAM ROM save data round-trips through a file" {
-    const fixture = fixtures[6];
+    const fixture = fixtureNamed("sram");
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const save_path = "sram.sav";

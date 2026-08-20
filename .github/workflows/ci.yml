@@ -36,6 +36,8 @@ jobs:
         run: git diff --exit-code -- fixtures
       - name: Demo ROM reports PASS
         run: zig build run-demo -Dsdl2=off
+      - name: Joypad ROM reports PASS
+        run: zig build run-headless -Dsdl2=off -- fixtures/roms/joypad.gb --expect pass
       - name: Battery RAM save round-trip
         run: |
           zig build run-headless -Dsdl2=off -- fixtures/roms/sram.gb --save sram.sav

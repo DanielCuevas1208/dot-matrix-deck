@@ -23,7 +23,7 @@ The listed 0.2 scope is complete.
 - SDL2 windowed frontend with a DMG-style shell and pause controls.
 - Configurable key bindings for the windowed frontend via a `dmd.keys.conf` file.
 - SM83 assembler with labels, data directives, and expressions.
-- Bundled demo, DMA, banking, MBC2, MBC3, MBC5, and SRAM ROMs that report PASS.
+- Bundled demo, DMA, joypad, banking, MBC2, MBC3, MBC5, and SRAM ROMs that report PASS.
 - Deterministic unit tests for every core module.
 - Continuous integration on Ubuntu and Windows.
 

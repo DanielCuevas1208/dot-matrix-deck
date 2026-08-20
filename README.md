@@ -43,7 +43,9 @@ The select bits are active-low.
 A cleared bit selects a column.
 The register returns the stored select bits when read.
 The bus raises the joypad interrupt on a visible falling edge.
+The joypad ROM checks register reads and active-low column selection.
 The joypad tests cover both columns, combined reads, and held-key selection.
+CI runs the joypad ROM as a separate headless check.
 
 ## Requirements
 
@@ -177,10 +179,11 @@ zig build fixtures -Dsdl2=off
 
 Each `.asm` file in `fixtures/asm` becomes a `.gb` image in `fixtures/roms`.
 The round-trip tests keep those images in sync.
-The suite ships seven ROMs:
+The suite ships eight ROMs:
 
 - `demo` renders the title and prints PASS.
 - `dma` copies a page into OAM and checks the result.
+- `joypad` checks FF00 select bits and active-low column reads.
 - `banking` switches MBC1 banks and checks each marker.
 - `mbc2` switches MBC2 banks and checks the internal RAM.
 - `mbc3` switches MBC3 banks, RAM banks, and the real-time clock.
@@ -204,7 +207,7 @@ zig build test-blargg -Dsdl2=off
 
 Add the blargg `cpu_instrs` ROMs under `fixtures/blargg` first.
 
-The current core suite reports 136 deterministic tests on Zig 0.16.
+The current suite reports 138 deterministic tests on Zig 0.16.
 CI repeats the suite on Ubuntu and Windows.
 
 ## Project layout
