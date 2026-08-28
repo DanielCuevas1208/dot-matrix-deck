@@ -27,6 +27,12 @@ The listed 0.2 scope is complete.
 - Deterministic unit tests for every core module.
 - Continuous integration on Ubuntu and Windows.
 
+### Release evidence
+
+- `zig build test -Dsdl2=off` checks 138 deterministic tests.
+- `zig build run-demo -Dsdl2=off` checks the bundled demo verdict.
+- `zig build run-headless -Dsdl2=off -- fixtures/roms/joypad.gb --expect pass` checks FF00 behavior.
+
 ### Next
 
 - Cycle-accurate timing for the timer and the PPU STAT modes.

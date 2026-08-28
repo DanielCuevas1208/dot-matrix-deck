@@ -121,6 +121,17 @@ test "both columns selected reads the AND of both" {
     joypad.setDirection(.right, true);
     // bit 0 is driven low by both columns.
     try testing.expectEqual(@as(u8, 0x0e), joypad.read() & 0x0f);
+
+    joypad.setButton(.start, true);
+    joypad.setDirection(.up, true);
+    joypad.write(0x20);
+    try testing.expectEqual(@as(u8, 0xea), joypad.read());
+    joypad.write(0x10);
+    try testing.expectEqual(@as(u8, 0xd6), joypad.read());
+    joypad.write(0x30);
+    try testing.expectEqual(@as(u8, 0xff), joypad.read());
+    joypad.write(0x00);
+    try testing.expectEqual(@as(u8, 0xc2), joypad.read());
 }
 
 test "release restores the released state" {

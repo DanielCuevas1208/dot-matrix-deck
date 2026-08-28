@@ -44,8 +44,19 @@ A cleared bit selects a column.
 The register returns the stored select bits when read.
 The bus raises the joypad interrupt on a visible falling edge.
 The joypad ROM checks register reads and active-low column selection.
-The joypad tests cover both columns, combined reads, and held-key selection.
+The joypad tests cover both columns, combined reads, stored select bits, and held-key selection.
 CI runs the joypad ROM as a separate headless check.
+
+## Verified hardware
+
+The release includes evidence for each new hardware path.
+
+| Surface | Evidence |
+| --- | --- |
+| `FF00` joypad | Active-low selection, stored bits, pressed keys, and interrupt edges |
+| `FF46` DMA | 160-byte OAM transfer and CPU blocking |
+| Cartridge banks | MBC1, MBC2, MBC3, and MBC5 fixture ROMs |
+| Battery RAM | Deterministic save-file round-trip |
 
 ## Requirements
 
@@ -94,6 +105,14 @@ DOT MATRIX DECK
 PASS
 Verdict: pass
 ```
+
+Check the joypad fixture separately.
+
+```text
+zig build run-headless -Dsdl2=off -- fixtures/roms/joypad.gb --expect pass
+```
+
+It prints `PASS` under `Serial output` and ends with `Verdict: pass`.
 
 ## Run a ROM
 

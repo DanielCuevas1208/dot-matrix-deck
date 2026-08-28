@@ -82,6 +82,7 @@ test "joypad button press is visible through FF00" {
     var emulator = try Emulator.init(std.testing.allocator, &rom);
     defer emulator.deinit();
     emulator.bus.write(0xff00, 0x10);
+    try std.testing.expectEqual(@as(u8, 0x10), emulator.bus.read(0xff00) & 0x30);
     emulator.bus.setButton(Joypad.Button.a, true);
     try std.testing.expectEqual(@as(u8, 0x0e), emulator.bus.read(0xff00) & 0x0f);
 }
