@@ -18,6 +18,7 @@ const fixtures = [_]Fixture{
     .{ .name = "demo", .source = @embedFile("fixtures/asm/demo.asm"), .image = @embedFile("fixtures/roms/demo.gb") },
     .{ .name = "dma", .source = @embedFile("fixtures/asm/dma.asm"), .image = @embedFile("fixtures/roms/dma.gb") },
     .{ .name = "joypad", .source = @embedFile("fixtures/asm/joypad.asm"), .image = @embedFile("fixtures/roms/joypad.gb") },
+    .{ .name = "timer", .source = @embedFile("fixtures/asm/timer.asm"), .image = @embedFile("fixtures/roms/timer.gb") },
     .{ .name = "banking", .source = @embedFile("fixtures/asm/banking.asm"), .image = @embedFile("fixtures/roms/banking.gb") },
     .{ .name = "mbc2", .source = @embedFile("fixtures/asm/mbc2.asm"), .image = @embedFile("fixtures/roms/mbc2.gb") },
     .{ .name = "mbc3", .source = @embedFile("fixtures/asm/mbc3.asm"), .image = @embedFile("fixtures/roms/mbc3.gb") },
@@ -85,6 +86,10 @@ test "joypad button press is visible through FF00" {
     try std.testing.expectEqual(@as(u8, 0x10), emulator.bus.read(0xff00) & 0x30);
     emulator.bus.setButton(Joypad.Button.a, true);
     try std.testing.expectEqual(@as(u8, 0x0e), emulator.bus.read(0xff00) & 0x0f);
+}
+
+test "timer ROM reports PASS" {
+    try expectFixturePass(fixtureNamed("timer"));
 }
 
 test "banking ROM reports PASS" {

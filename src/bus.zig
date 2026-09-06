@@ -94,7 +94,10 @@ pub const Bus = struct {
             },
             0xff0f => self.iflag = value & 0x1f,
             0xff04...0xff07 => self.timer.write(address, value),
-            0xff40...0xff45 => self.ppu.write(address, value),
+            0xff40...0xff45 => {
+                self.ppu.write(address, value);
+                self.syncPpuInterrupt();
+            },
             0xff46 => self.dma.start(value),
             0xff47...0xff4b => self.ppu.write(address, value),
             0xffff => self.ie = value,
@@ -146,6 +149,10 @@ pub const Bus = struct {
     fn raiseJoypadInterrupt(self: *Bus, before: u8) void {
         const after = self.joypad.read() & 0x0f;
         if ((before & ~after) != 0) self.iflag |= 0x10;
+    }
+
+    fn syncPpuInterrupt(self: *Bus) void {
+        if (self.ppu.takeStatInterrupt()) self.iflag |= 0x02;
     }
 
     pub fn serialOutput(self: *const Bus) []const u8 {
@@ -244,4 +251,18 @@ test "bus ticks the MBC3 clock through FF registers" {
     bus.write(0x6000, 0x00);
     bus.write(0x6000, 0x01);
     try testing.expectEqual(@as(u8, 0x00), bus.read(0xa000));
+}
+
+test "bus delivers STAT interrupts caused by register writes" {
+    const rom = [_]u8{0} ** 0x8000;
+    var bus = try Bus.init(testing.allocator, &rom);
+    defer bus.deinit();
+
+    bus.write(0xff0f, 0x00);
+    bus.write(0xff41, 0x20); // Enable the current mode 2 source.
+    try testing.expectEqual(@as(u8, 0x02), bus.iflag & 0x02);
+
+    bus.write(0xff0f, 0x00);
+    bus.tick(1);
+    try testing.expectEqual(@as(u8, 0), bus.iflag & 0x02);
 }

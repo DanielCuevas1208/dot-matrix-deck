@@ -20,18 +20,23 @@ pub const Ppu = struct {
     mode: u8 = 2,
     window_line: u8 = 0,
     frame_ready: bool = false,
+    stat_irq_line: bool = false,
+    stat_irq_pending: bool = false,
 
     const shade = [_]u32{ 0xfff8f8f0, 0xffa8a8a0, 0xff505050, 0xff101010 };
 
     pub fn tick(self: *Ppu, cycles: u16, iflag: *u8) void {
-        if ((self.lcdc & 0x80) == 0) return;
+        if ((self.lcdc & 0x80) == 0) {
+            self.updateStatLine();
+            self.deliverStatInterrupt(iflag);
+            return;
+        }
         var remaining = cycles;
         while (remaining != 0) : (remaining -= 1) {
             self.line_cycles += 1;
             const next_mode: u8 = if (self.ly >= ScreenHeight) 1 else if (self.line_cycles < 80) 2 else if (self.line_cycles < 252) 3 else 0;
             if (next_mode != self.mode) {
                 self.mode = next_mode;
-                self.statInterrupt(iflag);
                 if (next_mode == 0 and self.ly < ScreenHeight) self.renderLine();
             }
             if (self.line_cycles == 456) {
@@ -44,9 +49,10 @@ pub const Ppu = struct {
                     self.ly = 0;
                     self.window_line = 0;
                 }
-                if (self.ly == self.lyc and (self.stat & 0x40) != 0) iflag.* |= 0x02;
             }
+            self.updateStatLine();
         }
+        self.deliverStatInterrupt(iflag);
     }
 
     pub fn read(self: *const Ppu, address: u16) u8 {
@@ -85,16 +91,24 @@ pub const Ppu = struct {
                     self.ly = 0;
                     self.line_cycles = 0;
                     self.mode = 2;
+                    self.updateStatLine();
                 } else if ((old & 0x80) != 0 and (value & 0x80) == 0) {
                     self.ly = 0;
                     self.line_cycles = 0;
                     self.mode = 0;
+                    self.updateStatLine();
                 }
             },
-            0xff41 => self.stat = value & 0x78,
+            0xff41 => {
+                self.stat = value & 0x78;
+                self.updateStatLine();
+            },
             0xff42 => self.scy = value,
             0xff43 => self.scx = value,
-            0xff45 => self.lyc = value,
+            0xff45 => {
+                self.lyc = value;
+                self.updateStatLine();
+            },
             0xff47 => self.bgp = value,
             0xff48 => self.obp0 = value,
             0xff49 => self.obp1 = value,
@@ -110,14 +124,28 @@ pub const Ppu = struct {
         return ready;
     }
 
-    fn statInterrupt(self: *Ppu, iflag: *u8) void {
-        const enabled = switch (self.mode) {
+    // Returns and clears a STAT request caused by a register write. The bus
+    // consumes this because Ppu.write has no interrupt-register argument.
+    pub fn takeStatInterrupt(self: *Ppu) bool {
+        const pending = self.stat_irq_pending;
+        self.stat_irq_pending = false;
+        return pending;
+    }
+
+    fn updateStatLine(self: *Ppu) void {
+        const mode_enabled = switch (self.mode) {
             0 => (self.stat & 8) != 0,
             1 => (self.stat & 16) != 0,
             2 => (self.stat & 32) != 0,
             else => false,
         };
-        if (enabled) iflag.* |= 2;
+        const line = mode_enabled or ((self.stat & 0x40) != 0 and self.ly == self.lyc);
+        if (line and !self.stat_irq_line) self.stat_irq_pending = true;
+        self.stat_irq_line = line;
+    }
+
+    fn deliverStatInterrupt(self: *Ppu, iflag: *u8) void {
+        if (self.takeStatInterrupt()) iflag.* |= 0x02;
     }
 
     fn renderLine(self: *Ppu) void {
@@ -174,3 +202,53 @@ pub const Ppu = struct {
         }
     }
 };
+
+const testing = @import("std").testing;
+
+test "LCD modes follow the scanline timing" {
+    var ppu = Ppu{};
+    var iflag: u8 = 0;
+
+    ppu.tick(79, &iflag);
+    try testing.expectEqual(@as(u8, 2), ppu.read(0xff41) & 3);
+    ppu.tick(1, &iflag);
+    try testing.expectEqual(@as(u8, 3), ppu.read(0xff41) & 3);
+    ppu.tick(172, &iflag);
+    try testing.expectEqual(@as(u8, 0), ppu.read(0xff41) & 3);
+    ppu.tick(204, &iflag);
+    try testing.expectEqual(@as(u8, 1), ppu.read(0xff44));
+    try testing.expectEqual(@as(u8, 0), ppu.read(0xff41) & 3);
+    ppu.tick(1, &iflag);
+    try testing.expectEqual(@as(u8, 2), ppu.read(0xff41) & 3);
+}
+
+test "STAT requests an interrupt on each enabled rising edge" {
+    var ppu = Ppu{};
+    var iflag: u8 = 0;
+    ppu.write(0xff41, 0x08); // Mode 0 source.
+
+    ppu.tick(252, &iflag);
+    try testing.expectEqual(@as(u8, 0x02), iflag & 0x02);
+    iflag = 0;
+    ppu.tick(100, &iflag);
+    try testing.expectEqual(@as(u8, 0), iflag & 0x02);
+
+    ppu.tick(104, &iflag); // Finish the line and enter mode 2.
+    ppu.tick(80 + 172, &iflag);
+    try testing.expectEqual(@as(u8, 0x02), iflag & 0x02);
+}
+
+test "LYC coincidence follows LY and LYC changes" {
+    var ppu = Ppu{};
+    var iflag: u8 = 0;
+    ppu.write(0xff41, 0x40);
+    ppu.tick(0, &iflag);
+    try testing.expectEqual(@as(u8, 0x02), iflag & 0x02);
+
+    iflag = 0;
+    ppu.write(0xff45, 1);
+    ppu.tick(0, &iflag);
+    try testing.expectEqual(@as(u8, 0), iflag & 0x02);
+    ppu.tick(456, &iflag);
+    try testing.expectEqual(@as(u8, 0x02), iflag & 0x02);
+}

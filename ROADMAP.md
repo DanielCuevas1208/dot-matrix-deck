@@ -29,13 +29,33 @@ The listed 0.2 scope is complete.
 
 ### Release evidence
 
-- `zig build test -Dsdl2=off` checks 138 deterministic tests.
+- `zig build test -Dsdl2=off` checks 153 deterministic tests.
 - `zig build run-demo -Dsdl2=off` checks the bundled demo verdict.
 - `zig build run-headless -Dsdl2=off -- fixtures/roms/joypad.gb --expect pass` checks FF00 behavior.
+- `zig build run-headless -Dsdl2=off -- fixtures/roms/timer.gb --expect pass` checks timer overflow behavior.
+
+### Continued by Release 0.3
+
+The timing work continues in the release below.
+
+## Release 0.3: timing slice
+
+The timing slice is complete.
+It makes timer edges, delayed reloads, scanline modes, and STAT requests observable.
+
+### Done
+
+- Timer increments from divider falling edges at all four TAC frequencies.
+- DIV and TAC writes apply their falling-edge effects.
+- TIMA overflow exposes zero during the four-cycle reload delay.
+- Writing TIMA cancels a pending overflow reload.
+- PPU mode timing covers the 456 T-cycles in each scanline.
+- STAT requests use rising edges for mode and LYC coincidence sources.
+- Bundled timer ROM checks the overflow interrupt flag.
+- The suite reports 153 deterministic tests.
 
 ### Next
 
-- Cycle-accurate timing for the timer and the PPU STAT modes.
 - Serial link emulation between two emulator instances.
 - Audio processing unit (APU).
 - A debugger overlay for pause and reset.

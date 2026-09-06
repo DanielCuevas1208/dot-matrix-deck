@@ -22,8 +22,8 @@ The core splits into small modules with one job each.
 
 - `src/cpu.zig` executes the SM83 instruction set.
 - `src/bus.zig` routes memory between the devices.
-- `src/timer.zig` models the game clock.
-- `src/ppu.zig` renders background, sprites, and the window.
+- `src/timer.zig` models divider edges, delayed reloads, and interrupts.
+- `src/ppu.zig` renders graphics and exposes scanline modes and STAT edges.
 - `src/cartridge.zig` loads ROM-only, MBC1, MBC2, MBC3, and MBC5 images.
   It banks memory and drives the MBC3 real-time clock.
   Battery-backed carts keep RAM in a `.sav` file.
@@ -44,8 +44,17 @@ A cleared bit selects a column.
 The register returns the stored select bits when read.
 The bus raises the joypad interrupt on a visible falling edge.
 The joypad ROM checks register reads and active-low column selection.
+The timer ROM checks delayed overflow reload and the timer interrupt flag.
 The joypad tests cover both columns, combined reads, stored select bits, and held-key selection.
-CI runs the joypad ROM as a separate headless check.
+CI runs the joypad and timer ROMs as separate headless checks.
+
+## Timing model
+
+The CPU advances devices in T-cycles.
+The timer counts falling edges from the divider signal.
+An overflow reloads TIMA after four T-cycles.
+The PPU runs modes 2, 3, 0, and 1 across 456 T-cycles.
+STAT requests use rising edges from enabled mode and coincidence sources.
 
 ## Verified hardware
 
@@ -57,6 +66,8 @@ The release includes evidence for each new hardware path.
 | `FF46` DMA | 160-byte OAM transfer and CPU blocking |
 | Cartridge banks | MBC1, MBC2, MBC3, and MBC5 fixture ROMs |
 | Battery RAM | Deterministic save-file round-trip |
+| Timer | Divider edges, delayed reload, and IF bit 2 |
+| PPU timing | Scanline modes and STAT edge requests |
 
 ## Requirements
 
@@ -198,7 +209,7 @@ zig build fixtures -Dsdl2=off
 
 Each `.asm` file in `fixtures/asm` becomes a `.gb` image in `fixtures/roms`.
 The round-trip tests keep those images in sync.
-The suite ships eight ROMs:
+The suite ships nine ROMs:
 
 - `demo` renders the title and prints PASS.
 - `dma` copies a page into OAM and checks the result.
@@ -208,6 +219,7 @@ The suite ships eight ROMs:
 - `mbc3` switches MBC3 banks, RAM banks, and the real-time clock.
 - `mbc5` switches MBC5 banks and RAM banks.
 - `sram` enables battery-backed RAM and verifies the save file round-trip.
+- `timer` waits for a TIMA overflow and checks the timer interrupt flag.
 
 ## Test
 
@@ -226,7 +238,7 @@ zig build test-blargg -Dsdl2=off
 
 Add the blargg `cpu_instrs` ROMs under `fixtures/blargg` first.
 
-The current suite reports 138 deterministic tests on Zig 0.16.
+The current suite reports 153 deterministic tests on Zig 0.16.
 CI repeats the suite on Ubuntu and Windows.
 
 ## Project layout
@@ -239,7 +251,7 @@ CI repeats the suite on Ubuntu and Windows.
 ## Limitations
 
 Hardware coverage is incomplete.
-Timing accuracy, cartridge support, audio, and save games will improve.
+Serial links, audio, and further timing edge cases remain.
 The core starts at the post-boot state.
 It does not emulate the boot ROM.
 The MBC3 clock advances with the emulated cycle count.
