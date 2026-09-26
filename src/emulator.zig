@@ -25,6 +25,15 @@ pub const Emulator = struct {
         self.bus.deinit();
     }
 
+    // Connects the link ports on two emulator instances.
+    pub fn connectSerial(left: *Emulator, right: *Emulator) void {
+        Bus.connectSerial(&left.bus, &right.bus);
+    }
+
+    pub fn disconnectSerial(self: *Emulator) void {
+        self.bus.disconnectSerial();
+    }
+
     pub fn step(self: *Emulator) u16 {
         if (self.bus.dma.active()) {
             const cycles = self.bus.dmaStep();

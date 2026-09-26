@@ -1,6 +1,6 @@
 .{
     .name = .dot_matrix_deck,
-    .version = "0.3.0",
+    .version = "0.4.0",
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0x3ad14c39cc8e69a1,
     .paths = .{

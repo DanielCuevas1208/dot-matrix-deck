@@ -58,6 +58,21 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(gbasm);
 
+    const link_demo = b.addExecutable(.{
+        .name = "dot-matrix-deck-link-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/link_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    link_demo.root_module.addImport("emulator", b.createModule(.{
+        .root_source_file = b.path("src/emulator.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    b.installArtifact(link_demo);
+
     const sdl2_opt = b.option([]const u8, "sdl2", "Path to an SDL2 prefix. Set to \"off\" to disable the windowed frontend.");
 
     const build_windowed = blk: {
@@ -180,6 +195,18 @@ pub fn build(b: *std.Build) void {
     run_demo.addArg("pass");
     const demo_step = b.step("run-demo", "Run the bundled demo ROM headlessly and check it reports PASS");
     demo_step.dependOn(&run_demo.step);
+
+    const run_link_demo = b.addRunArtifact(link_demo);
+    run_link_demo.addFileArg(b.path("fixtures/roms/link-a.gb"));
+    run_link_demo.addFileArg(b.path("fixtures/roms/link-b.gb"));
+    const link_demo_step = b.step("run-link-demo", "Connect two bundled ROMs and verify a serial exchange");
+    link_demo_step.dependOn(&run_link_demo.step);
+
+    const fixture_suite = b.addRunArtifact(headless);
+    fixture_suite.addArg("--blargg-suite");
+    fixture_suite.addDirectoryArg(b.path("fixtures/roms"));
+    const fixture_suite_step = b.step("test-fixtures", "Run every bundled ROM and require a PASS verdict");
+    fixture_suite_step.dependOn(&fixture_suite.step);
 
     const blargg_step = b.step("test-blargg", "Run the blargg cpu_instrs ROMs in headless mode and check their serial output");
     {

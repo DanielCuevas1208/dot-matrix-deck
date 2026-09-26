@@ -29,7 +29,7 @@ The listed 0.2 scope is complete.
 
 ### Release evidence
 
-- `zig build test -Dsdl2=off` checks 153 deterministic tests.
+- `zig build test -Dsdl2=off` checks 158 deterministic tests.
 - `zig build run-demo -Dsdl2=off` checks the bundled demo verdict.
 - `zig build run-headless -Dsdl2=off -- fixtures/roms/joypad.gb --expect pass` checks FF00 behavior.
 - `zig build run-headless -Dsdl2=off -- fixtures/roms/timer.gb --expect pass` checks timer overflow behavior.
@@ -52,11 +52,28 @@ It makes timer edges, delayed reloads, scanline modes, and STAT requests observa
 - PPU mode timing covers the 456 T-cycles in each scanline.
 - STAT requests use rising edges for mode and LYC coincidence sources.
 - Bundled timer ROM checks the overflow interrupt flag.
-- The suite reports 153 deterministic tests.
+- The suite reports 158 deterministic tests.
+
+## Release 0.4: connectivity slice
+
+The connectivity slice is complete.
+It adds a deterministic byte-level link between two emulator instances.
+
+### Done
+
+- Public `Emulator.connectSerial` and `disconnectSerial` APIs.
+- Internal-clock and armed external-clock byte exchanges.
+- Paired ROM fixtures that verify both received marker bytes.
+- A headless link demo with a readable pass verdict.
+- CI coverage for every bundled ROM and the link demo.
+
+### Release evidence
+
+- `zig build test-fixtures -Dsdl2=off` checks 11 bundled ROM verdicts.
+- `zig build run-link-demo -Dsdl2=off` checks both received marker bytes.
 
 ### Next
 
-- Serial link emulation between two emulator instances.
 - Audio processing unit (APU).
 - A debugger overlay for pause and reset.
 
@@ -66,3 +83,4 @@ It makes timer edges, delayed reloads, scanline modes, and STAT requests observa
 - The PPU has no window line counter edge cases yet.
 - The SDL2 frontend ships without audio.
 - Save files store external RAM only. The MBC3 real-time clock state is not persisted.
+- Serial links complete at byte boundaries. Bit-level clock timing is not modeled.

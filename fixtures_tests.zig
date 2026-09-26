@@ -18,6 +18,8 @@ const fixtures = [_]Fixture{
     .{ .name = "demo", .source = @embedFile("fixtures/asm/demo.asm"), .image = @embedFile("fixtures/roms/demo.gb") },
     .{ .name = "dma", .source = @embedFile("fixtures/asm/dma.asm"), .image = @embedFile("fixtures/roms/dma.gb") },
     .{ .name = "joypad", .source = @embedFile("fixtures/asm/joypad.asm"), .image = @embedFile("fixtures/roms/joypad.gb") },
+    .{ .name = "link-a", .source = @embedFile("fixtures/asm/link-a.asm"), .image = @embedFile("fixtures/roms/link-a.gb") },
+    .{ .name = "link-b", .source = @embedFile("fixtures/asm/link-b.asm"), .image = @embedFile("fixtures/roms/link-b.gb") },
     .{ .name = "timer", .source = @embedFile("fixtures/asm/timer.asm"), .image = @embedFile("fixtures/roms/timer.gb") },
     .{ .name = "banking", .source = @embedFile("fixtures/asm/banking.asm"), .image = @embedFile("fixtures/roms/banking.gb") },
     .{ .name = "mbc2", .source = @embedFile("fixtures/asm/mbc2.asm"), .image = @embedFile("fixtures/roms/mbc2.gb") },
@@ -75,6 +77,28 @@ test "DMA ROM reports PASS" {
 
 test "joypad ROM reports PASS" {
     try expectFixturePass(fixtureNamed("joypad"));
+}
+
+test "linked ROM pair exchanges bytes and reports PASS" {
+    var left = try Emulator.init(std.testing.allocator, fixtureNamed("link-a").image);
+    defer left.deinit();
+    var right = try Emulator.init(std.testing.allocator, fixtureNamed("link-b").image);
+    defer right.deinit();
+    Emulator.connectSerial(&left, &right);
+
+    var steps: usize = 0;
+    while (steps < 100_000) : (steps += 1) {
+        _ = left.step();
+        _ = right.step();
+        if (std.mem.indexOf(u8, left.serialOutput(), "PASS") != null and
+            std.mem.indexOf(u8, right.serialOutput(), "PASS") != null) break;
+    }
+
+    try std.testing.expect(steps < 100_000);
+    try std.testing.expectEqual(@as(u8, 'B'), left.bus.read(0xc001));
+    try std.testing.expectEqual(@as(u8, 'A'), right.bus.read(0xc001));
+    try std.testing.expect(std.mem.indexOf(u8, left.serialOutput(), "PASS") != null);
+    try std.testing.expect(std.mem.indexOf(u8, right.serialOutput(), "PASS") != null);
 }
 
 test "joypad button press is visible through FF00" {

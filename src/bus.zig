@@ -15,6 +15,7 @@ pub const Bus = struct {
     hram: [0x7f]u8 = [_]u8{0} ** 0x7f,
     sb: u8 = 0,
     sc: u8 = 0,
+    serial_peer: ?*Bus = null,
     iflag: u8 = 0xe1,
     ie: u8 = 0,
     serial: [4096]u8 = [_]u8{0} ** 4096,
@@ -25,7 +26,27 @@ pub const Bus = struct {
     }
 
     pub fn deinit(self: *Bus) void {
+        self.disconnectSerial();
         self.cartridge.deinit();
+    }
+
+    // Connects two serial ports. A transfer completes when both ports have
+    // started, or when the internal-clock port clocks an armed peer.
+    pub fn connectSerial(left: *Bus, right: *Bus) void {
+        if (left == right) return;
+        left.disconnectSerial();
+        right.disconnectSerial();
+        left.serial_peer = right;
+        right.serial_peer = left;
+        left.tryCompleteSerial();
+        right.tryCompleteSerial();
+    }
+
+    pub fn disconnectSerial(self: *Bus) void {
+        if (self.serial_peer) |peer| {
+            if (peer.serial_peer == self) peer.serial_peer = null;
+        }
+        self.serial_peer = null;
     }
 
     pub fn read(self: *Bus, address: u16) u8 {
@@ -83,14 +104,7 @@ pub const Bus = struct {
             0xff01 => self.sb = value,
             0xff02 => {
                 self.sc = value;
-                if ((value & 0x81) == 0x81) {
-                    if (self.serial_len < self.serial.len) {
-                        self.serial[self.serial_len] = self.sb;
-                        self.serial_len += 1;
-                    }
-                    self.iflag |= 0x08;
-                    self.sc = 0x01;
-                }
+                if ((value & 0x80) != 0) self.tryCompleteSerial();
             },
             0xff0f => self.iflag = value & 0x1f,
             0xff04...0xff07 => self.timer.write(address, value),
@@ -158,6 +172,38 @@ pub const Bus = struct {
     pub fn serialOutput(self: *const Bus) []const u8 {
         return self.serial[0..self.serial_len];
     }
+
+    pub fn serialTransferActive(self: *const Bus) bool {
+        return (self.sc & 0x80) != 0;
+    }
+
+    fn tryCompleteSerial(self: *Bus) void {
+        if (!self.serialTransferActive()) return;
+
+        if (self.serial_peer) |peer| {
+            if (!peer.serialTransferActive()) return;
+            const sent = self.sb;
+            const received = peer.sb;
+            self.completeSerial(received);
+            peer.completeSerial(sent);
+            return;
+        }
+
+        // The headless runner has no cable. Internal-clock transfers retain
+        // the existing diagnostic behavior and receive an idle-high byte.
+        if ((self.sc & 0x01) != 0) self.completeSerial(0xff);
+    }
+
+    fn completeSerial(self: *Bus, received: u8) void {
+        const sent = self.sb;
+        self.sb = received;
+        self.sc &= 0x01;
+        self.iflag |= 0x08;
+        if (self.serial_len < self.serial.len) {
+            self.serial[self.serial_len] = sent;
+            self.serial_len += 1;
+        }
+    }
 };
 
 const testing = @import("std").testing;
@@ -217,6 +263,46 @@ test "DMA register reads back the last source page" {
     try testing.expectEqual(@as(u8, 0x80), bus.read(0xff46));
     while (bus.dma.active()) _ = bus.dmaStep();
     try testing.expectEqual(@as(u8, 0x80), bus.read(0xff46));
+}
+
+test "serial link exchanges bytes and raises completion interrupts" {
+    const rom = [_]u8{0} ** 0x8000;
+    var left = try Bus.init(testing.allocator, &rom);
+    defer left.deinit();
+    var right = try Bus.init(testing.allocator, &rom);
+    defer right.deinit();
+    Bus.connectSerial(&left, &right);
+
+    left.write(0xff01, 'L');
+    right.write(0xff01, 'R');
+    right.write(0xff02, 0x80); // External-clock endpoint arms first.
+    left.write(0xff02, 0x81); // Internal-clock endpoint completes both.
+
+    try testing.expectEqual(@as(u8, 'R'), left.read(0xff01));
+    try testing.expectEqual(@as(u8, 'L'), right.read(0xff01));
+    try testing.expectEqual(@as(u8, 0), left.read(0xff02) & 0x80);
+    try testing.expectEqual(@as(u8, 0), right.read(0xff02) & 0x80);
+    try testing.expectEqual(@as(u8, 0x08), left.iflag & 0x08);
+    try testing.expectEqual(@as(u8, 0x08), right.iflag & 0x08);
+    try testing.expectEqualStrings("L", left.serialOutput());
+    try testing.expectEqualStrings("R", right.serialOutput());
+
+    left.disconnectSerial();
+    left.write(0xff01, 0x58);
+    left.write(0xff02, 0x81);
+    try testing.expectEqual(@as(u8, 0xff), left.read(0xff01));
+}
+
+test "unlinked internal serial transfers retain the diagnostic loopback" {
+    const rom = [_]u8{0} ** 0x8000;
+    var bus = try Bus.init(testing.allocator, &rom);
+    defer bus.deinit();
+
+    bus.write(0xff01, 0x42);
+    bus.write(0xff02, 0x81);
+
+    try testing.expectEqual(@as(u8, 0xff), bus.read(0xff01));
+    try testing.expectEqualStrings("B", bus.serialOutput());
 }
 
 test "bus ticks the MBC3 clock through FF registers" {

@@ -30,7 +30,7 @@ The core splits into small modules with one job each.
 - `src/dma.zig` copies pages into OAM with the correct timing.
 - `src/serial.zig` turns link-port bytes into test verdicts.
 - `src/joypad.zig` reports button state through the FF00 register.
-- `src/emulator.zig` ties the core together.
+- `src/emulator.zig` ties the core together and connects two serial ports.
 - `src/headless.zig` runs a ROM without a window.
 - `src/main.zig` and `src/frontend.zig` form the SDL2 frontend.
 - `tools/gbasm.zig` assembles SM83 test ROMs.
@@ -47,6 +47,7 @@ The joypad ROM checks register reads and active-low column selection.
 The timer ROM checks delayed overflow reload and the timer interrupt flag.
 The joypad tests cover both columns, combined reads, stored select bits, and held-key selection.
 CI runs the joypad and timer ROMs as separate headless checks.
+The link demo connects two emulator instances through the same serial API.
 
 ## Timing model
 
@@ -68,6 +69,7 @@ The release includes evidence for each new hardware path.
 | Battery RAM | Deterministic save-file round-trip |
 | Timer | Divider edges, delayed reload, and IF bit 2 |
 | PPU timing | Scanline modes and STAT edge requests |
+| Serial link | Two ROMs exchange bytes through connected emulator instances |
 
 ## Requirements
 
@@ -124,6 +126,21 @@ zig build run-headless -Dsdl2=off -- fixtures/roms/joypad.gb --expect pass
 ```
 
 It prints `PASS` under `Serial output` and ends with `Verdict: pass`.
+
+Run the serial link demo.
+
+```text
+zig build run-link-demo -Dsdl2=off
+```
+
+Sample output:
+
+```text
+Serial link demo:
+A received: B
+B received: A
+Verdict: pass
+```
 
 ## Run a ROM
 
@@ -209,11 +226,12 @@ zig build fixtures -Dsdl2=off
 
 Each `.asm` file in `fixtures/asm` becomes a `.gb` image in `fixtures/roms`.
 The round-trip tests keep those images in sync.
-The suite ships nine ROMs:
+The suite ships eleven ROMs:
 
 - `demo` renders the title and prints PASS.
 - `dma` copies a page into OAM and checks the result.
 - `joypad` checks FF00 select bits and active-low column reads.
+- `link-a` and `link-b` exchange marker bytes through a connected cable.
 - `banking` switches MBC1 banks and checks each marker.
 - `mbc2` switches MBC2 banks and checks the internal RAM.
 - `mbc3` switches MBC3 banks, RAM banks, and the real-time clock.
@@ -238,7 +256,13 @@ zig build test-blargg -Dsdl2=off
 
 Add the blargg `cpu_instrs` ROMs under `fixtures/blargg` first.
 
-The current suite reports 153 deterministic tests on Zig 0.16.
+Run every bundled ROM through the headless runner.
+
+```text
+zig build test-fixtures -Dsdl2=off
+```
+
+The current suite reports 158 deterministic tests and 11 bundled ROMs on Zig 0.16.
 CI repeats the suite on Ubuntu and Windows.
 
 ## Project layout
@@ -251,7 +275,8 @@ CI repeats the suite on Ubuntu and Windows.
 ## Limitations
 
 Hardware coverage is incomplete.
-Serial links, audio, and further timing edge cases remain.
+Audio and further timing edge cases remain.
+Serial links complete at byte boundaries and do not model individual bit clocks.
 The core starts at the post-boot state.
 It does not emulate the boot ROM.
 The MBC3 clock advances with the emulated cycle count.

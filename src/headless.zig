@@ -153,7 +153,7 @@ fn runSuite(io: std.Io, allocator: std.mem.Allocator, directory: []const u8) !u8
         total += 1;
         const path = try std.fs.path.join(allocator, &.{ directory, name });
         defer allocator.free(path);
-        const options = Options{ .rom_path = path, .max_cycles = default_max_cycles };
+        const options = Options{ .rom_path = path, .max_cycles = default_max_cycles, .expect = .pass };
         const code = runRom(io, allocator, options) catch |err| blk: {
             std.debug.print("{s}: error {s}\n", .{ name, @errorName(err) });
             break :blk 1;
