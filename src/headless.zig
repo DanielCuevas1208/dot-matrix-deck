@@ -12,6 +12,8 @@ const Options = struct {
     trace: bool = false,
     expect: ?serial.Verdict = null,
     timeout_ms: u64 = 120_000,
+    load_save: ?[]const u8 = null,
+    save: ?[]const u8 = null,
 };
 
 fn usage(program: []const u8) void {
@@ -19,10 +21,12 @@ fn usage(program: []const u8) void {
         \\Dot Matrix Deck - headless runner
         \\Usage:
         \\  {s} <rom.gb> [--max-cycles N] [--trace] [--expect pass|fail|any]
+        \\       [--load-save <path>] [--save <path>]
         \\  {s} --blargg-suite <directory>
         \\
         \\Runs a ROM without a window, prints its serial output, and sets the
-        \\exit code from the test verdict.
+        \\exit code from the test verdict. --load-save restores battery RAM
+        \\before the run; --save writes battery RAM to a file after the run.
         \\
     , .{ program, program });
 }
@@ -84,6 +88,18 @@ fn runRom(io: std.Io, allocator: std.mem.Allocator, options: Options) !u8 {
     var emulator = try Emulator.init(allocator, rom);
     defer emulator.deinit();
 
+    if (options.load_save) |path| {
+        if (!emulator.hasSaveData()) {
+            std.debug.print("Cartridge has no battery RAM; save file ignored.\n", .{});
+        } else {
+            const loaded = emulator.loadSaveFile(io, std.Io.Dir.cwd(), path) catch |err| {
+                std.debug.print("Could not load save file {s}: {s}\n", .{ path, @errorName(err) });
+                return 1;
+            };
+            std.debug.print("{s}\n", .{if (loaded) "Loaded save data." else "No save file found; starting fresh."});
+        }
+    }
+
     var runner = Runner{
         .emulator = &emulator,
         .options = options,
@@ -103,6 +119,13 @@ fn runRom(io: std.Io, allocator: std.mem.Allocator, options: Options) !u8 {
     const wanted = options.expect orelse verdict;
     const ok = wanted == verdict;
     std.debug.print("Verdict: {s}\n", .{@tagName(verdict)});
+
+    if (options.save) |path| {
+        emulator.saveSaveFile(io, std.Io.Dir.cwd(), path) catch |err| {
+            std.debug.print("Could not write save file {s}: {s}\n", .{ path, @errorName(err) });
+            return 1;
+        };
+    }
     return if (ok) 0 else 1;
 }
 
@@ -130,7 +153,7 @@ fn runSuite(io: std.Io, allocator: std.mem.Allocator, directory: []const u8) !u8
         total += 1;
         const path = try std.fs.path.join(allocator, &.{ directory, name });
         defer allocator.free(path);
-        const options = Options{ .rom_path = path, .max_cycles = default_max_cycles };
+        const options = Options{ .rom_path = path, .max_cycles = default_max_cycles, .expect = .pass };
         const code = runRom(io, allocator, options) catch |err| blk: {
             std.debug.print("{s}: error {s}\n", .{ name, @errorName(err) });
             break :blk 1;
@@ -203,6 +226,20 @@ pub fn main(init: std.process.Init) !void {
                 std.process.exit(2);
             }
             options.blargg_suite = argv[index];
+        } else if (std.mem.eql(u8, arg, "--load-save")) {
+            index += 1;
+            if (index >= argv.len) {
+                std.debug.print("--load-save needs a path\n", .{});
+                std.process.exit(2);
+            }
+            options.load_save = argv[index];
+        } else if (std.mem.eql(u8, arg, "--save")) {
+            index += 1;
+            if (index >= argv.len) {
+                std.debug.print("--save needs a path\n", .{});
+                std.process.exit(2);
+            }
+            options.save = argv[index];
         } else if (options.rom_path == null) {
             options.rom_path = arg;
         } else {

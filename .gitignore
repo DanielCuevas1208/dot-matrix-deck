@@ -1,4 +1,6 @@
 .zig-cache/
+.zig-global-cache/
+.zig-global-cache-*/
 zig-out/
 *.o
 *.obj
@@ -8,5 +10,6 @@ zig-out/
 *.exe
 .DS_Store
 *.gb
+!fixtures/roms/*.gb
 *.sav
 *.swp

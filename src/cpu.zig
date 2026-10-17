@@ -273,9 +273,18 @@ pub const Cpu = struct {
 
     fn setPair(self: *Cpu, pair_index: u2, value: u16) void {
         switch (pair_index) {
-            0 => { self.b = @truncate(value >> 8); self.c = @truncate(value); },
-            1 => { self.d = @truncate(value >> 8); self.e = @truncate(value); },
-            2 => { self.h = @truncate(value >> 8); self.l = @truncate(value); },
+            0 => {
+                self.b = @truncate(value >> 8);
+                self.c = @truncate(value);
+            },
+            1 => {
+                self.d = @truncate(value >> 8);
+                self.e = @truncate(value);
+            },
+            2 => {
+                self.h = @truncate(value >> 8);
+                self.l = @truncate(value);
+            },
             else => self.sp = value,
         }
     }

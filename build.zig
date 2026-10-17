@@ -17,6 +17,18 @@ fn sdl2PrefixFound(b: *std.Build, prefix: []const u8) bool {
     return true;
 }
 
+// Prefers the SDL2 DLL import library so the static MinGW archive is not
+// pulled into a native build. MinGW and vcpkg ship different import libs.
+fn sdl2ImportLib(b: *std.Build, prefix: []const u8) ?[]const u8 {
+    const candidates = [_][]const u8{ "libSDL2.dll.a", "SDL2.lib", "SDL2.dll.a" };
+    for (candidates) |name| {
+        const path = b.pathJoin(&.{ prefix, "lib", name });
+        b.build_root.handle.access(b.graph.io, path, .{}) catch continue;
+        return path;
+    }
+    return null;
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -46,6 +58,21 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(gbasm);
 
+    const link_demo = b.addExecutable(.{
+        .name = "dot-matrix-deck-link-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/link_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    link_demo.root_module.addImport("emulator", b.createModule(.{
+        .root_source_file = b.path("src/emulator.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    b.installArtifact(link_demo);
+
     const sdl2_opt = b.option([]const u8, "sdl2", "Path to an SDL2 prefix. Set to \"off\" to disable the windowed frontend.");
 
     const build_windowed = blk: {
@@ -57,22 +84,22 @@ pub fn build(b: *std.Build) void {
     };
 
     if (build_windowed) {
-    var sdl_prefix: ?[]const u8 = null;
-    if (sdl2_opt) |value| {
-        if (value.len != 0 and !std.mem.eql(u8, value, "off")) sdl_prefix = value;
-    } else {
-        if (b.graph.environ_map.get("SDL2_DIR")) |dir| {
-            if (dir.len != 0) sdl_prefix = dir;
-        }
-        if (sdl_prefix == null and target.result.os.tag == .windows) {
+        var sdl_prefix: ?[]const u8 = null;
+        if (sdl2_opt) |value| {
+            if (value.len != 0 and !std.mem.eql(u8, value, "off")) sdl_prefix = value;
+        } else {
+            if (b.graph.environ_map.get("SDL2_DIR")) |dir| {
+                if (dir.len != 0) sdl_prefix = dir;
+            }
+            if (sdl_prefix == null and target.result.os.tag == .windows) {
                 for (sdl_prefix_candidates) |candidate| {
                     if (sdl2PrefixFound(b, candidate)) {
                         sdl_prefix = candidate;
                         break;
                     }
                 }
+            }
         }
-    }
 
         if (sdl_prefix != null or target.result.os.tag != .windows) {
             const exe = b.addExecutable(.{
@@ -84,18 +111,31 @@ pub fn build(b: *std.Build) void {
                     .link_libc = true,
                 }),
             });
-            exe.root_module.linkSystemLibrary("SDL2", .{});
             if (target.result.os.tag == .windows) {
                 for (sdl_deps) |lib| exe.root_module.linkSystemLibrary(lib, .{});
             }
+            var sdl2_linked = false;
             if (sdl_prefix) |prefix| {
                 exe.root_module.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
                 exe.root_module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib" }) });
+                // Link the DLL import library directly. The generic search
+                // may otherwise select the static MinGW archive, which pulls
+                // MinGW-only CRT symbols into a native build.
+                if (target.result.os.tag == .windows) {
+                    if (sdl2ImportLib(b, prefix)) |import_lib| {
+                        exe.root_module.addObjectFile(.{ .cwd_relative = import_lib });
+                        sdl2_linked = true;
+                    }
+                }
                 const dll_path = b.pathJoin(&.{ prefix, "bin", "SDL2.dll" });
                 if (sdl2PrefixFound(b, prefix)) {
-                    const install_dll = b.addInstallBinFile(.{ .cwd_relative = dll_path }, "bin/SDL2.dll");
+                    // Dest is relative to zig-out/bin, next to the frontend.
+                    const install_dll = b.addInstallBinFile(.{ .cwd_relative = dll_path }, "SDL2.dll");
                     b.getInstallStep().dependOn(&install_dll.step);
                 }
+            }
+            if (!sdl2_linked) {
+                exe.root_module.linkSystemLibrary("SDL2", .{ .preferred_link_mode = .dynamic });
             }
             b.installArtifact(exe);
 
@@ -112,7 +152,7 @@ pub fn build(b: *std.Build) void {
 
     const core_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/emulator.zig"),
+            .root_source_file = b.path("src/tests.zig"),
             .target = target,
             .optimize = optimize,
         }),
@@ -131,6 +171,16 @@ pub fn build(b: *std.Build) void {
     const run_asm_tests = b.addRunArtifact(asm_tests);
     test_step.dependOn(&run_asm_tests.step);
 
+    const fixture_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("fixtures_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_fixture_tests = b.addRunArtifact(fixture_tests);
+    test_step.dependOn(&run_fixture_tests.step);
+
     const fixtures_step = b.step("fixtures", "Regenerate bundled test ROMs from their assembly sources");
     {
         const run = b.addRunArtifact(gbasm);
@@ -138,6 +188,25 @@ pub fn build(b: *std.Build) void {
         run.addDirectoryArg(b.path("fixtures/roms"));
         fixtures_step.dependOn(&run.step);
     }
+
+    const run_demo = b.addRunArtifact(headless);
+    run_demo.addFileArg(b.path("fixtures/roms/demo.gb"));
+    run_demo.addArg("--expect");
+    run_demo.addArg("pass");
+    const demo_step = b.step("run-demo", "Run the bundled demo ROM headlessly and check it reports PASS");
+    demo_step.dependOn(&run_demo.step);
+
+    const run_link_demo = b.addRunArtifact(link_demo);
+    run_link_demo.addFileArg(b.path("fixtures/roms/link-a.gb"));
+    run_link_demo.addFileArg(b.path("fixtures/roms/link-b.gb"));
+    const link_demo_step = b.step("run-link-demo", "Connect two bundled ROMs and verify a serial exchange");
+    link_demo_step.dependOn(&run_link_demo.step);
+
+    const fixture_suite = b.addRunArtifact(headless);
+    fixture_suite.addArg("--blargg-suite");
+    fixture_suite.addDirectoryArg(b.path("fixtures/roms"));
+    const fixture_suite_step = b.step("test-fixtures", "Run every bundled ROM and require a PASS verdict");
+    fixture_suite_step.dependOn(&fixture_suite.step);
 
     const blargg_step = b.step("test-blargg", "Run the blargg cpu_instrs ROMs in headless mode and check their serial output");
     {

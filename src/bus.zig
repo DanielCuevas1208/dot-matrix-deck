@@ -1,17 +1,21 @@
 const Cartridge = @import("cartridge.zig").Cartridge;
+const Dma = @import("dma.zig").Dma;
+const Joypad = @import("joypad.zig").Joypad;
 const Ppu = @import("ppu.zig").Ppu;
 const Timer = @import("timer.zig").Timer;
 
 pub const Bus = struct {
     allocator: @import("std").mem.Allocator,
     cartridge: Cartridge,
+    dma: Dma = .{},
+    joypad: Joypad = .{},
     ppu: Ppu = .{},
     timer: Timer = .{},
     wram: [0x2000]u8 = [_]u8{0} ** 0x2000,
     hram: [0x7f]u8 = [_]u8{0} ** 0x7f,
-    joypad: u8 = 0xcf,
     sb: u8 = 0,
     sc: u8 = 0,
+    serial_peer: ?*Bus = null,
     iflag: u8 = 0xe1,
     ie: u8 = 0,
     serial: [4096]u8 = [_]u8{0} ** 4096,
@@ -22,7 +26,27 @@ pub const Bus = struct {
     }
 
     pub fn deinit(self: *Bus) void {
+        self.disconnectSerial();
         self.cartridge.deinit();
+    }
+
+    // Connects two serial ports. A transfer completes when both ports have
+    // started, or when the internal-clock port clocks an armed peer.
+    pub fn connectSerial(left: *Bus, right: *Bus) void {
+        if (left == right) return;
+        left.disconnectSerial();
+        right.disconnectSerial();
+        left.serial_peer = right;
+        right.serial_peer = left;
+        left.tryCompleteSerial();
+        right.tryCompleteSerial();
+    }
+
+    pub fn disconnectSerial(self: *Bus) void {
+        if (self.serial_peer) |peer| {
+            if (peer.serial_peer == self) peer.serial_peer = null;
+        }
+        self.serial_peer = null;
     }
 
     pub fn read(self: *Bus, address: u16) u8 {
@@ -33,12 +57,14 @@ pub const Bus = struct {
         if (address >= 0xfe00 and address < 0xfea0) return self.ppu.read(address);
         if (address >= 0xff80 and address < 0xffff) return self.hram[address - 0xff80];
         return switch (address) {
-            0xff00 => self.joypad,
+            0xff00 => self.joypad.read(),
             0xff01 => self.sb,
             0xff02 => self.sc,
             0xff0f => self.iflag | 0xe0,
             0xff04...0xff07 => self.timer.read(address),
-            0xff40...0xff4b => self.ppu.read(address),
+            0xff40...0xff45 => self.ppu.read(address),
+            0xff46 => self.dma.read(),
+            0xff47...0xff4b => self.ppu.read(address),
             0xffff => self.ie,
             else => 0xff,
         };
@@ -70,22 +96,24 @@ pub const Bus = struct {
             return;
         }
         switch (address) {
-            0xff00 => self.joypad = (self.joypad & 0xcf) | (value & 0x30),
+            0xff00 => {
+                const before = self.joypad.read() & 0x0f;
+                self.joypad.write(value);
+                self.raiseJoypadInterrupt(before);
+            },
             0xff01 => self.sb = value,
             0xff02 => {
                 self.sc = value;
-                if ((value & 0x81) == 0x81) {
-                    if (self.serial_len < self.serial.len) {
-                        self.serial[self.serial_len] = self.sb;
-                        self.serial_len += 1;
-                    }
-                    self.iflag |= 0x08;
-                    self.sc = 0x01;
-                }
+                if ((value & 0x80) != 0) self.tryCompleteSerial();
             },
             0xff0f => self.iflag = value & 0x1f,
             0xff04...0xff07 => self.timer.write(address, value),
-            0xff40...0xff4b => self.ppu.write(address, value),
+            0xff40...0xff45 => {
+                self.ppu.write(address, value);
+                self.syncPpuInterrupt();
+            },
+            0xff46 => self.dma.start(value),
+            0xff47...0xff4b => self.ppu.write(address, value),
             0xffff => self.ie = value,
             else => {},
         }
@@ -94,6 +122,18 @@ pub const Bus = struct {
     pub fn tick(self: *Bus, cycles: u16) void {
         self.timer.tick(cycles, &self.iflag);
         self.ppu.tick(cycles, &self.iflag);
+        self.cartridge.tick(cycles);
+    }
+
+    // Runs one DMA machine cycle. Copies one byte from the source page
+    // into OAM and advances the timer and PPU. Returns cycles consumed.
+    pub fn dmaStep(self: *Bus) u16 {
+        const source = self.dma.next() orelse return 0;
+        const index = self.dma.offset - 1;
+        self.ppu.oam[index] = self.read(source);
+        self.timer.tick(Dma.cycles_per_byte, &self.iflag);
+        self.ppu.tick(Dma.cycles_per_byte, &self.iflag);
+        return Dma.cycles_per_byte;
     }
 
     pub fn pendingInterrupts(self: *const Bus) u8 {
@@ -104,7 +144,211 @@ pub const Bus = struct {
         self.iflag &= ~(@as(u8, 1) << bit);
     }
 
+    // A visible button press edge raises the joypad interrupt (IF bit 4).
+    pub fn setButton(self: *Bus, bit: Joypad.Button, pressed: bool) void {
+        const before = self.joypad.read() & 0x0f;
+        self.joypad.setButton(bit, pressed);
+        self.raiseJoypadInterrupt(before);
+    }
+
+    // A visible direction press edge raises the joypad interrupt (IF bit 4).
+    pub fn setDirection(self: *Bus, bit: Joypad.Direction, pressed: bool) void {
+        const before = self.joypad.read() & 0x0f;
+        self.joypad.setDirection(bit, pressed);
+        self.raiseJoypadInterrupt(before);
+    }
+
+    // The joypad interrupt is a falling edge on the visible low nibble.
+    // Presses in an unselected column do not change that nibble.
+    fn raiseJoypadInterrupt(self: *Bus, before: u8) void {
+        const after = self.joypad.read() & 0x0f;
+        if ((before & ~after) != 0) self.iflag |= 0x10;
+    }
+
+    fn syncPpuInterrupt(self: *Bus) void {
+        if (self.ppu.takeStatInterrupt()) self.iflag |= 0x02;
+    }
+
     pub fn serialOutput(self: *const Bus) []const u8 {
         return self.serial[0..self.serial_len];
     }
+
+    pub fn serialTransferActive(self: *const Bus) bool {
+        return (self.sc & 0x80) != 0;
+    }
+
+    fn tryCompleteSerial(self: *Bus) void {
+        if (!self.serialTransferActive()) return;
+
+        if (self.serial_peer) |peer| {
+            if (!peer.serialTransferActive()) return;
+            const sent = self.sb;
+            const received = peer.sb;
+            self.completeSerial(received);
+            peer.completeSerial(sent);
+            return;
+        }
+
+        // The headless runner has no cable. Internal-clock transfers retain
+        // the existing diagnostic behavior and receive an idle-high byte.
+        if ((self.sc & 0x01) != 0) self.completeSerial(0xff);
+    }
+
+    fn completeSerial(self: *Bus, received: u8) void {
+        const sent = self.sb;
+        self.sb = received;
+        self.sc &= 0x01;
+        self.iflag |= 0x08;
+        if (self.serial_len < self.serial.len) {
+            self.serial[self.serial_len] = sent;
+            self.serial_len += 1;
+        }
+    }
 };
+
+const testing = @import("std").testing;
+
+test "joypad reads the selected button column" {
+    const rom = [_]u8{0} ** 0x8000;
+    var bus = try Bus.init(testing.allocator, &rom);
+    defer bus.deinit();
+    bus.write(0xff00, 0x10); // bit 5 low selects the buttons column.
+    try testing.expectEqual(@as(u8, 0x10), bus.read(0xff00) & 0x30);
+    bus.setButton(Joypad.Button.a, true);
+    try testing.expectEqual(@as(u8, 0x0e), bus.read(0xff00) & 0x0f);
+}
+
+test "joypad interrupt follows a visible falling edge" {
+    const rom = [_]u8{0} ** 0x8000;
+    var bus = try Bus.init(testing.allocator, &rom);
+    defer bus.deinit();
+    bus.write(0xff0f, 0x00);
+    bus.write(0xff00, 0x30); // No column is selected.
+    bus.setDirection(Joypad.Direction.right, true);
+    try testing.expectEqual(@as(u8, 0), bus.iflag & 0x10);
+    bus.write(0xff00, 0x20); // Selecting the held D-pad creates the edge.
+    try testing.expectEqual(@as(u8, 0x10), bus.iflag & 0x10);
+    bus.write(0xff0f, 0x00);
+    bus.setDirection(Joypad.Direction.right, true); // No state change.
+    try testing.expectEqual(@as(u8, 0), bus.iflag & 0x10);
+    bus.setDirection(Joypad.Direction.right, false);
+    bus.setDirection(Joypad.Direction.right, true);
+    try testing.expectEqual(@as(u8, 0x10), bus.iflag & 0x10);
+}
+
+test "DMA transfers a WRAM page into OAM" {
+    const rom = [_]u8{0} ** 0x8000;
+    var bus = try Bus.init(testing.allocator, &rom);
+    defer bus.deinit();
+    for (0..Dma.byte_count) |i| {
+        bus.write(0xc000 + @as(u16, @intCast(i)), @intCast(i & 0xff));
+    }
+    bus.write(0xff46, 0xc0);
+    try testing.expectEqual(@as(u8, 0xc0), bus.read(0xff46));
+    var steps: u32 = 0;
+    while (bus.dma.active()) : (steps += 1) {
+        try testing.expectEqual(@as(u16, 4), bus.dmaStep());
+    }
+    try testing.expectEqual(@as(u32, 160), steps);
+    for (0..Dma.byte_count) |i| {
+        try testing.expectEqual(@as(u8, @intCast(i & 0xff)), bus.read(0xfe00 + @as(u16, @intCast(i))));
+    }
+}
+
+test "DMA register reads back the last source page" {
+    const rom = [_]u8{0} ** 0x8000;
+    var bus = try Bus.init(testing.allocator, &rom);
+    defer bus.deinit();
+    bus.write(0xff46, 0x80);
+    try testing.expectEqual(@as(u8, 0x80), bus.read(0xff46));
+    while (bus.dma.active()) _ = bus.dmaStep();
+    try testing.expectEqual(@as(u8, 0x80), bus.read(0xff46));
+}
+
+test "serial link exchanges bytes and raises completion interrupts" {
+    const rom = [_]u8{0} ** 0x8000;
+    var left = try Bus.init(testing.allocator, &rom);
+    defer left.deinit();
+    var right = try Bus.init(testing.allocator, &rom);
+    defer right.deinit();
+    Bus.connectSerial(&left, &right);
+
+    left.write(0xff01, 'L');
+    right.write(0xff01, 'R');
+    right.write(0xff02, 0x80); // External-clock endpoint arms first.
+    left.write(0xff02, 0x81); // Internal-clock endpoint completes both.
+
+    try testing.expectEqual(@as(u8, 'R'), left.read(0xff01));
+    try testing.expectEqual(@as(u8, 'L'), right.read(0xff01));
+    try testing.expectEqual(@as(u8, 0), left.read(0xff02) & 0x80);
+    try testing.expectEqual(@as(u8, 0), right.read(0xff02) & 0x80);
+    try testing.expectEqual(@as(u8, 0x08), left.iflag & 0x08);
+    try testing.expectEqual(@as(u8, 0x08), right.iflag & 0x08);
+    try testing.expectEqualStrings("L", left.serialOutput());
+    try testing.expectEqualStrings("R", right.serialOutput());
+
+    left.disconnectSerial();
+    left.write(0xff01, 0x58);
+    left.write(0xff02, 0x81);
+    try testing.expectEqual(@as(u8, 0xff), left.read(0xff01));
+}
+
+test "unlinked internal serial transfers retain the diagnostic loopback" {
+    const rom = [_]u8{0} ** 0x8000;
+    var bus = try Bus.init(testing.allocator, &rom);
+    defer bus.deinit();
+
+    bus.write(0xff01, 0x42);
+    bus.write(0xff02, 0x81);
+
+    try testing.expectEqual(@as(u8, 0xff), bus.read(0xff01));
+    try testing.expectEqualStrings("B", bus.serialOutput());
+}
+
+test "bus ticks the MBC3 clock through FF registers" {
+    var image: [0x40000]u8 = [_]u8{0} ** 0x40000;
+    image[0x147] = 0x0f; // MBC3
+    image[0x149] = 0x03; // 32KB RAM
+    var bus = try Bus.init(testing.allocator, &image);
+    defer bus.deinit();
+
+    bus.write(0x0000, 0x0a); // enable RAM
+    bus.write(0x4000, 0x0c); // RTC control register
+    bus.write(0xa000, 0x40); // halt the clock
+    bus.write(0x4000, 0x08); // seconds
+    bus.write(0xa000, 0x59);
+    bus.write(0x4000, 0x09); // minutes
+    bus.write(0xa000, 0x00);
+    bus.write(0x4000, 0x0a); // hours
+    bus.write(0xa000, 0x00);
+    bus.write(0x4000, 0x0c); // clear halt
+    bus.write(0xa000, 0x00);
+
+    // One second of cycles advances the clock by one minute.
+    const chunks: u32 = 128;
+    const per_chunk: u16 = @intCast(Cartridge.cycles_per_second / chunks);
+    for (0..chunks) |_| bus.tick(per_chunk);
+
+    bus.write(0x4000, 0x09);
+    bus.write(0x6000, 0x00);
+    bus.write(0x6000, 0x01);
+    try testing.expectEqual(@as(u8, 0x01), bus.read(0xa000));
+    bus.write(0x4000, 0x08);
+    bus.write(0x6000, 0x00);
+    bus.write(0x6000, 0x01);
+    try testing.expectEqual(@as(u8, 0x00), bus.read(0xa000));
+}
+
+test "bus delivers STAT interrupts caused by register writes" {
+    const rom = [_]u8{0} ** 0x8000;
+    var bus = try Bus.init(testing.allocator, &rom);
+    defer bus.deinit();
+
+    bus.write(0xff0f, 0x00);
+    bus.write(0xff41, 0x20); // Enable the current mode 2 source.
+    try testing.expectEqual(@as(u8, 0x02), bus.iflag & 0x02);
+
+    bus.write(0xff0f, 0x00);
+    bus.tick(1);
+    try testing.expectEqual(@as(u8, 0), bus.iflag & 0x02);
+}

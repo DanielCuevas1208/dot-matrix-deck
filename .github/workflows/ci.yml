@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Format check
+        run: zig fmt --check .
+      - name: Unit and integration tests
+        run: zig build test -Dsdl2=off --global-cache-dir .zig-global-cache --summary all
+      - name: Regenerate bundled ROMs
+        run: zig build fixtures -Dsdl2=off --global-cache-dir .zig-global-cache
+      - name: Committed fixtures match regeneration
+        if: ${{ runner.os == 'Linux' }}
+        run: git diff --exit-code -- fixtures
+      - name: Bundled ROM suite reports PASS
+        run: zig build test-fixtures -Dsdl2=off --global-cache-dir .zig-global-cache
+      - name: Demo ROM reports PASS
+        run: zig build run-demo -Dsdl2=off --global-cache-dir .zig-global-cache
+      - name: Serial link demo reports PASS
+        run: zig build run-link-demo -Dsdl2=off --global-cache-dir .zig-global-cache
+      - name: Joypad ROM reports PASS
+        run: zig build run-headless -Dsdl2=off --global-cache-dir .zig-global-cache -- fixtures/roms/joypad.gb --expect pass
+      - name: Timer ROM reports PASS
+        run: zig build run-headless -Dsdl2=off --global-cache-dir .zig-global-cache -- fixtures/roms/timer.gb --expect pass
+      - name: Battery RAM save round-trip
+        run: |
+          zig build run-headless -Dsdl2=off --global-cache-dir .zig-global-cache -- fixtures/roms/sram.gb --save sram.sav
+          zig build run-headless -Dsdl2=off --global-cache-dir .zig-global-cache -- fixtures/roms/sram.gb --load-save sram.sav
+      - name: Build headless tools
+        run: zig build -Dsdl2=off --global-cache-dir .zig-global-cache
+
+  windowed:
+    name: Windowed frontend (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Install SDL2
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+      - name: Build windowed frontend
+        run: zig build --global-cache-dir .zig-global-cache --summary all

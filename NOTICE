@@ -1,0 +1,16 @@
+# Notice
+
+This project includes and links to the following third-party software.
+
+## SDL2
+
+The windowed frontend links against Simple DirectMedia Layer (SDL2).
+SDL2 is licensed under the zlib license.
+The zlib license text is available at https://libsdl.org/license.php
+
+## Test ROM sources
+
+The bundled demo, DMA, and banking ROMs are written for this project.
+The blargg cpu_instrs test suite is not bundled.
+You add it yourself to run the optional suite.
+Refer to the original suite license when you use it.
