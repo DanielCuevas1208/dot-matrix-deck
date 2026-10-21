@@ -1,4 +1,5 @@
 const Cartridge = @import("cartridge.zig").Cartridge;
+const Apu = @import("apu.zig").Apu;
 const Dma = @import("dma.zig").Dma;
 const Joypad = @import("joypad.zig").Joypad;
 const Ppu = @import("ppu.zig").Ppu;
@@ -7,6 +8,7 @@ const Timer = @import("timer.zig").Timer;
 pub const Bus = struct {
     allocator: @import("std").mem.Allocator,
     cartridge: Cartridge,
+    apu: Apu = .{},
     dma: Dma = .{},
     joypad: Joypad = .{},
     ppu: Ppu = .{},
@@ -62,6 +64,7 @@ pub const Bus = struct {
             0xff02 => self.sc,
             0xff0f => self.iflag | 0xe0,
             0xff04...0xff07 => self.timer.read(address),
+            0xff16...0xff19, 0xff26 => self.apu.read(address),
             0xff40...0xff45 => self.ppu.read(address),
             0xff46 => self.dma.read(),
             0xff47...0xff4b => self.ppu.read(address),
@@ -108,6 +111,7 @@ pub const Bus = struct {
             },
             0xff0f => self.iflag = value & 0x1f,
             0xff04...0xff07 => self.timer.write(address, value),
+            0xff16...0xff19, 0xff26 => self.apu.write(address, value),
             0xff40...0xff45 => {
                 self.ppu.write(address, value);
                 self.syncPpuInterrupt();
@@ -120,6 +124,7 @@ pub const Bus = struct {
     }
 
     pub fn tick(self: *Bus, cycles: u16) void {
+        self.apu.tick(cycles);
         self.timer.tick(cycles, &self.iflag);
         self.ppu.tick(cycles, &self.iflag);
         self.cartridge.tick(cycles);
@@ -131,6 +136,7 @@ pub const Bus = struct {
         const source = self.dma.next() orelse return 0;
         const index = self.dma.offset - 1;
         self.ppu.oam[index] = self.read(source);
+        self.apu.tick(Dma.cycles_per_byte);
         self.timer.tick(Dma.cycles_per_byte, &self.iflag);
         self.ppu.tick(Dma.cycles_per_byte, &self.iflag);
         return Dma.cycles_per_byte;
@@ -351,4 +357,20 @@ test "bus delivers STAT interrupts caused by register writes" {
     bus.write(0xff0f, 0x00);
     bus.tick(1);
     try testing.expectEqual(@as(u8, 0), bus.iflag & 0x02);
+}
+
+test "bus routes channel 2 registers and advances its waveform" {
+    const rom = [_]u8{0} ** 0x8000;
+    var bus = try Bus.init(testing.allocator, &rom);
+    defer bus.deinit();
+
+    bus.write(0xff16, 0x00);
+    bus.write(0xff17, 0xf0);
+    bus.write(0xff18, 0xff);
+    bus.write(0xff19, 0x87);
+
+    try testing.expectEqual(@as(u8, 0xf2), bus.read(0xff26));
+    try testing.expectEqual(@as(i16, 30_720), bus.apu.sample());
+    bus.tick(4);
+    try testing.expectEqual(@as(i16, -30_720), bus.apu.sample());
 }

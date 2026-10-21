@@ -73,6 +73,25 @@ pub fn build(b: *std.Build) void {
     }));
     b.installArtifact(link_demo);
 
+    const apu_demo = b.addExecutable(.{
+        .name = "dot-matrix-deck-apu-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/apu_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    apu_demo.root_module.addImport("bus", b.createModule(.{
+        .root_source_file = b.path("src/bus.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    b.installArtifact(apu_demo);
+
+    const run_apu_demo = b.addRunArtifact(apu_demo);
+    const apu_demo_step = b.step("run-apu-demo", "Render the deterministic square-channel WAV fixture");
+    apu_demo_step.dependOn(&run_apu_demo.step);
+
     const sdl2_opt = b.option([]const u8, "sdl2", "Path to an SDL2 prefix. Set to \"off\" to disable the windowed frontend.");
 
     const build_windowed = blk: {

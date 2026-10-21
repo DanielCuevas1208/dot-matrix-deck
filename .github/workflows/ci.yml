@@ -40,6 +40,11 @@ jobs:
         run: zig build run-demo -Dsdl2=off --global-cache-dir .zig-global-cache
       - name: Serial link demo reports PASS
         run: zig build run-link-demo -Dsdl2=off --global-cache-dir .zig-global-cache
+      - name: APU WAV demo reports PASS
+        run: zig build run-apu-demo -Dsdl2=off --global-cache-dir .zig-global-cache
+      - name: Committed APU fixture matches regeneration
+        if: ${{ runner.os == 'Linux' }}
+        run: git diff --exit-code -- fixtures/audio/square-channel.wav
       - name: Joypad ROM reports PASS
         run: zig build run-headless -Dsdl2=off --global-cache-dir .zig-global-cache -- fixtures/roms/joypad.gb --expect pass
       - name: Timer ROM reports PASS
