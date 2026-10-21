@@ -3,7 +3,9 @@
 Dot Matrix Deck is a Game Boy emulator written in Zig.
 It models the SM83 CPU, the memory bus, the timers, and the pixel pipeline.
 A software renderer shows the screen in an SDL2 window.
-A headless mode runs public test ROMs for automated checks.
+A headless mode runs public test ROMs and renders deterministic audio fixtures.
+
+Read the [roadmap](ROADMAP.md) for release status, acceptance criteria, and verification commands.
 
 ## Why it exists
 
@@ -23,6 +25,7 @@ The core splits into small modules with one job each.
 - `src/cpu.zig` executes the SM83 instruction set.
 - `src/bus.zig` routes memory between the devices.
 - `src/timer.zig` models divider edges, delayed reloads, and interrupts.
+- `src/apu.zig` models channel 2, a square wave, length, and volume envelope.
 - `src/ppu.zig` renders graphics and exposes scanline modes and STAT edges.
 - `src/cartridge.zig` loads ROM-only, MBC1, MBC2, MBC3, and MBC5 images.
   It banks memory and drives the MBC3 real-time clock.
@@ -34,6 +37,7 @@ The core splits into small modules with one job each.
 - `src/headless.zig` runs a ROM without a window.
 - `src/main.zig` and `src/frontend.zig` form the SDL2 frontend.
 - `tools/gbasm.zig` assembles SM83 test ROMs.
+- `tools/apu_demo.zig` renders a deterministic PCM WAV fixture.
 
 The frontend logic stays free of SDL2.
 Unit tests cover that logic in headless builds.
@@ -48,6 +52,7 @@ The timer ROM checks delayed overflow reload and the timer interrupt flag.
 The joypad tests cover both columns, combined reads, stored select bits, and held-key selection.
 CI runs the joypad and timer ROMs as separate headless checks.
 The link demo connects two emulator instances through the same serial API.
+The audio demo uses the same bus register path as the emulator core.
 
 ## Timing model
 
@@ -56,6 +61,28 @@ The timer counts falling edges from the divider signal.
 An overflow reloads TIMA after four T-cycles.
 The PPU runs modes 2, 3, 0, and 1 across 456 T-cycles.
 STAT requests use rising edges from enabled mode and coincidence sources.
+The APU advances with CPU and DMA cycles.
+The channel frame sequencer clocks length at 256 Hz and envelopes at 64 Hz.
+
+## Audio slice
+
+Channel 2 uses the Game Boy square-wave registers.
+The core exposes these registers through the memory bus.
+
+| Register | Behavior |
+| --- | --- |
+| `FF16` NR21 | Bits 7–6 select duty; bits 5–0 load a 64-step length counter |
+| `FF17` NR22 | Bits 7–4 set volume; bit 3 sets direction; bits 2–0 set envelope period |
+| `FF18` NR23 | Stores the low frequency byte |
+| `FF19` NR24 | Stores frequency bits, length enable, and trigger |
+| `FF26` NR52 | Controls master power and reports channel 2 status |
+
+The DAC disables when NR22 bits 7–3 are zero.
+The envelope clocks at 64 Hz and changes volume at its selected period.
+Period zero holds the current volume.
+The frequency timer uses `(2048 - frequency) * 4` CPU cycles.
+The renderer converts CPU cycles to 44.1 kHz with integer arithmetic.
+The WAV output uses centered signed 16-bit mono samples.
 
 ## Verified hardware
 
@@ -70,6 +97,7 @@ The release includes evidence for each new hardware path.
 | Timer | Divider edges, delayed reload, and IF bit 2 |
 | PPU timing | Scanline modes and STAT edge requests |
 | Serial link | Two ROMs exchange bytes through connected emulator instances |
+| APU channel 2 | Register transitions, duty samples, envelope steps, and WAV output |
 
 ## Requirements
 
@@ -141,6 +169,24 @@ A received: B
 B received: A
 Verdict: pass
 ```
+
+Render the square-channel audio fixture.
+
+```text
+zig build run-apu-demo -Dsdl2=off
+```
+
+Sample output:
+
+```text
+APU square-channel demo:
+Wrote fixtures/audio/square-channel.wav
+Samples: 11025
+First samples: 30720, 30720, 30720, 30720
+Verdict: pass
+```
+
+The fixture contains 0.25 seconds of mono, signed 16-bit PCM at 44.1 kHz.
 
 ## Run a ROM
 
@@ -239,6 +285,14 @@ The suite ships eleven ROMs:
 - `sram` enables battery-backed RAM and verifies the save file round-trip.
 - `timer` waits for a TIMA overflow and checks the timer interrupt flag.
 
+Generate the audio fixture with the headless demo.
+
+```text
+zig build run-apu-demo -Dsdl2=off
+```
+
+The command rewrites `fixtures/audio/square-channel.wav` with stable bytes.
+
 ## Test
 
 Run the whole suite.
@@ -262,20 +316,24 @@ Run every bundled ROM through the headless runner.
 zig build test-fixtures -Dsdl2=off
 ```
 
-The current suite reports 158 deterministic tests and 11 bundled ROMs on Zig 0.16.
+The current suite reports 170 deterministic tests and 11 bundled ROMs on Zig 0.16.
 CI repeats the suite on Ubuntu and Windows.
+
+The CI job also regenerates the WAV fixture and checks its committed bytes.
 
 ## Project layout
 
 - `src/` holds the emulator core and frontend.
-- `tools/` holds the assembler.
-- `fixtures/` holds the bundled ROMs and their sources.
+- `tools/` holds the assembler and audio demo.
+- `fixtures/` holds ROM sources, ROM images, and the WAV fixture.
 - `.github/workflows/` holds the CI pipeline.
 
 ## Limitations
 
 Hardware coverage is incomplete.
-Audio and further timing edge cases remain.
+Only channel 2 has audio output.
+The SDL2 frontend does not play audio yet.
+The debugger overlay remains planned.
 Serial links complete at byte boundaries and do not model individual bit clocks.
 The core starts at the post-boot state.
 It does not emulate the boot ROM.

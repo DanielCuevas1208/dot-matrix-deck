@@ -109,6 +109,7 @@ pub const Emulator = struct {
     pub fn reset(self: *Emulator) void {
         self.cpu = .{};
         self.bus.ppu = .{};
+        self.bus.apu = .{};
         self.bus.timer = .{};
         self.bus.joypad = .{};
         self.bus.dma = .{};
