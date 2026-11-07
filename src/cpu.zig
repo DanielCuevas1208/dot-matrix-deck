@@ -674,19 +674,35 @@ pub const Cpu = struct {
         return 8;
     }
 
-    fn bc(self: *const Cpu) u16 {
+    pub fn bc(self: *const Cpu) u16 {
         return @as(u16, self.b) << 8 | self.c;
     }
 
-    fn de(self: *const Cpu) u16 {
+    pub fn de(self: *const Cpu) u16 {
         return @as(u16, self.d) << 8 | self.e;
     }
 
-    fn hl(self: *const Cpu) u16 {
+    pub fn hl(self: *const Cpu) u16 {
         return @as(u16, self.h) << 8 | self.l;
     }
 
-    fn af(self: *const Cpu) u16 {
+    pub fn af(self: *const Cpu) u16 {
         return @as(u16, self.a) << 8 | self.f;
+    }
+
+    pub fn flagZ(self: *const Cpu) bool {
+        return (self.f & Z) != 0;
+    }
+
+    pub fn flagN(self: *const Cpu) bool {
+        return (self.f & N) != 0;
+    }
+
+    pub fn flagH(self: *const Cpu) bool {
+        return (self.f & H) != 0;
+    }
+
+    pub fn flagC(self: *const Cpu) bool {
+        return (self.f & C) != 0;
     }
 };

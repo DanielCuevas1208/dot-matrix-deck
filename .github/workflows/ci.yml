@@ -42,6 +42,8 @@ jobs:
         run: zig build run-link-demo -Dsdl2=off --global-cache-dir .zig-global-cache
       - name: APU WAV demo reports PASS
         run: zig build run-apu-demo -Dsdl2=off --global-cache-dir .zig-global-cache
+      - name: Debugger demo reports PASS
+        run: zig build run-debugger-demo -Dsdl2=off --global-cache-dir .zig-global-cache
       - name: Committed APU fixture matches regeneration
         if: ${{ runner.os == 'Linux' }}
         run: git diff --exit-code -- fixtures/audio/square-channel.wav

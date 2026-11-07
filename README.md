@@ -33,11 +33,13 @@ The core splits into small modules with one job each.
 - `src/dma.zig` copies pages into OAM with the correct timing.
 - `src/serial.zig` turns link-port bytes into test verdicts.
 - `src/joypad.zig` reports button state through the FF00 register.
+- `src/debugger.zig` adds breakpoints, stepping, and register inspection.
 - `src/emulator.zig` ties the core together and connects two serial ports.
 - `src/headless.zig` runs a ROM without a window.
 - `src/main.zig` and `src/frontend.zig` form the SDL2 frontend.
 - `tools/gbasm.zig` assembles SM83 test ROMs.
 - `tools/apu_demo.zig` renders a deterministic PCM WAV fixture.
+- `src/debugger_demo.zig` verifies breakpoints on the bundled demo ROM.
 
 The frontend logic stays free of SDL2.
 Unit tests cover that logic in headless builds.
@@ -98,6 +100,23 @@ The release includes evidence for each new hardware path.
 | PPU timing | Scanline modes and STAT edge requests |
 | Serial link | Two ROMs exchange bytes through connected emulator instances |
 | APU channel 2 | Register transitions, duty samples, envelope steps, and WAV output |
+| Debugger | Breakpoint pause, single-step, register report, and SDL2 overlay |
+
+## Debugger slice
+
+The debugger module sits beside the emulator core.
+It does not change CPU semantics.
+It reads the same registers the core already exposes.
+
+Headless workflows use `Debugger.continueExecution` and `Debugger.step`.
+The demo build sets a breakpoint at `$0150` in `fixtures/roms/demo.gb`.
+That address is the demo init routine.
+The demo steps once, checks `LD A,$00`, and runs until the serial port prints PASS.
+
+The SDL2 frontend draws an optional overlay.
+Press **D** to show registers and the current instruction.
+Press **S** to execute one instruction while the overlay is visible.
+Press **P** to pause or resume.
 
 ## Requirements
 
@@ -187,6 +206,22 @@ Verdict: pass
 ```
 
 The fixture contains 0.25 seconds of mono, signed 16-bit PCM at 44.1 kHz.
+
+Run the debugger demo.
+
+```text
+zig build run-debugger-demo -Dsdl2=off
+```
+
+Sample output:
+
+```text
+Debugger demo:
+Breakpoint: $0150
+After step: PC $0152 A $00
+Serial: PASS
+Verdict: pass
+```
 
 ## Run a ROM
 
@@ -316,7 +351,7 @@ Run every bundled ROM through the headless runner.
 zig build test-fixtures -Dsdl2=off
 ```
 
-The current suite reports 170 deterministic tests and 11 bundled ROMs on Zig 0.16.
+The current suite reports 178 deterministic tests and 11 bundled ROMs on Zig 0.16.
 CI repeats the suite on Ubuntu and Windows.
 
 The CI job also regenerates the WAV fixture and checks its committed bytes.
@@ -333,7 +368,7 @@ The CI job also regenerates the WAV fixture and checks its committed bytes.
 Hardware coverage is incomplete.
 Only channel 2 has audio output.
 The SDL2 frontend does not play audio yet.
-The debugger overlay remains planned.
+The overlay does not set breakpoints from the keyboard yet.
 Serial links complete at byte boundaries and do not model individual bit clocks.
 The core starts at the post-boot state.
 It does not emulate the boot ROM.
