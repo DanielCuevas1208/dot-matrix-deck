@@ -1,5 +1,6 @@
 const std = @import("std");
 const Emulator = @import("emulator.zig").Emulator;
+const debugger = @import("debugger.zig");
 const frontend = @import("frontend.zig");
 const ppu = @import("ppu.zig");
 
@@ -11,6 +12,7 @@ const c = @cImport({
 const frame_cap: u64 = 1 << 24;
 const frame_ms: u32 = 16;
 const fast_forward_frames: u32 = 4;
+const debugger_steps_per_frame: u64 = 8_192;
 
 const default_key_config = "dmd.keys.conf";
 
@@ -51,7 +53,7 @@ fn usage(program: []const u8) void {
         \\  {s} <rom.gb> [--keys <path>]
         \\
         \\Keys: Z=A, X=B, Enter=Start, Shift=Select, arrows=d-pad.
-        \\P pause, R reset, F fast forward, ESC quit.
+        \\P pause, R reset, F fast forward, D debugger overlay, S step, ESC quit.
         \\Battery RAM loads from and saves to a .sav file next to the ROM.
         \\Key bindings load from dmd.keys.conf in the working directory.
         \\Pass --keys to use another config file instead.
@@ -255,6 +257,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var run_state = frontend.RunState{};
+    var dbg = debugger.Debugger.init(allocator, &emulator);
+    defer dbg.deinit();
     var last_tick = c.SDL_GetTicks();
 
     while (run_state.running) {
@@ -273,9 +277,22 @@ pub fn main(init: std.process.Init) !void {
                     switch (key) {
                         .pause => run_state.togglePause(),
                         .fast_forward => run_state.toggleFastForward(),
+                        .debugger_overlay => {
+                            run_state.toggleDebuggerOverlay();
+                            if (run_state.debugger_overlay) run_state.paused = true;
+                        },
+                        .step => {
+                            if (run_state.debugger_overlay) {
+                                run_state.paused = true;
+                                _ = dbg.step();
+                            }
+                        },
                         .reset => {
                             emulator.reset();
                             syncHeldKeys(&emulator, resolved);
+                            dbg.clearBreakpoints();
+                            dbg.breakpoint_hit = null;
+                            dbg.resuming_from_breakpoint = false;
                         },
                         else => _ = frontend.applyKey(&emulator.bus, key, true),
                     }
@@ -293,11 +310,26 @@ pub fn main(init: std.process.Init) !void {
             const frames: u32 = if (run_state.fast_forward) fast_forward_frames else 1;
             var frame_index: u32 = 0;
             while (frame_index < frames) : (frame_index += 1) {
-                emulator.runFrame(frame_cap);
+                if (run_state.debugger_overlay and dbg.listBreakpoints().len > 0) {
+                    const reason = dbg.continueExecution(debugger_steps_per_frame);
+                    if (reason == .breakpoint) run_state.paused = true;
+                } else {
+                    emulator.runFrame(frame_cap);
+                }
             }
         }
 
-        const frame = emulator.bus.ppu.frame;
+        var frame = emulator.bus.ppu.frame;
+        if (run_state.debugger_overlay) {
+            frontend.renderDebuggerOverlay(
+                &frame,
+                &emulator.cpu,
+                &emulator.bus,
+                dbg.listBreakpoints(),
+                run_state.paused,
+                dbg.breakpoint_hit,
+            );
+        }
         _ = c.SDL_UpdateTexture(texture, null, &frame, @as(c_int, @intCast(ppu.ScreenWidth * @sizeOf(u32))));
         color.set(renderer, frontend.palette.shell);
         _ = c.SDL_RenderClear(renderer);

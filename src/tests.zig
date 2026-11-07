@@ -12,4 +12,5 @@ test {
     _ = @import("frontend.zig");
     _ = @import("serial.zig");
     _ = @import("disasm.zig");
+    _ = @import("debugger.zig");
 }

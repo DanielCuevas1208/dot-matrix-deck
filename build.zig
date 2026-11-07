@@ -92,6 +92,20 @@ pub fn build(b: *std.Build) void {
     const apu_demo_step = b.step("run-apu-demo", "Render the deterministic square-channel WAV fixture");
     apu_demo_step.dependOn(&run_apu_demo.step);
 
+    const debugger_demo = b.addExecutable(.{
+        .name = "dot-matrix-deck-debugger-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/debugger_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(debugger_demo);
+
+    const run_debugger_demo = b.addRunArtifact(debugger_demo);
+    const debugger_demo_step = b.step("run-debugger-demo", "Pause at a bundled-ROM breakpoint and resume to PASS");
+    debugger_demo_step.dependOn(&run_debugger_demo.step);
+
     const sdl2_opt = b.option([]const u8, "sdl2", "Path to an SDL2 prefix. Set to \"off\" to disable the windowed frontend.");
 
     const build_windowed = blk: {

@@ -72,11 +72,6 @@ It adds a deterministic byte-level link between two emulator instances.
 - `zig build test-fixtures -Dsdl2=off` checks 11 bundled ROM verdicts.
 - `zig build run-link-demo -Dsdl2=off` checks both received marker bytes.
 
-### Continued by Release 0.5
-
-The audio slice is complete below.
-The debugger remains planned in the future milestones.
-
 ## Release 0.5: audio slice
 
 Status: complete.
@@ -107,11 +102,11 @@ Acceptance criteria:
 - `zig build run-apu-demo -Dsdl2=off` regenerates the WAV fixture.
 - CI compares the regenerated WAV bytes with the committed fixture.
 
-## Future milestones
+## Release 0.6: debugger slice
+
+Status: complete.
 
 ### Milestone: `debugger-breakpoints`
-
-Status: planned.
 
 User-visible outcome: inspect CPU execution from a reproducible headless debugger session.
 
@@ -123,7 +118,19 @@ Acceptance criteria:
 - Resume execution and report CPU registers.
 - Expose the same state in the optional overlay.
 
-Verification: `zig build test -Dsdl2=off` plus a dedicated debugger fixture command.
+### Done
+
+- Added `src/debugger.zig` with breakpoints, stepping, register inspection, and disassembly.
+- Added deterministic unit tests for breakpoint pause, resume, and memory reads.
+- Added `src/debugger_demo.zig` for the bundled demo ROM at `$0150`.
+- Wired the SDL2 overlay with register text, instruction text, and step keys.
+
+### Release evidence
+
+- `zig build test -Dsdl2=off` checks 178 deterministic tests.
+- `zig build run-debugger-demo -Dsdl2=off` pauses at `$0150` and resumes to PASS.
+
+## Future milestones
 
 ### Milestone: `ppu-window-edge-cases`
 
@@ -141,11 +148,28 @@ Acceptance criteria:
 
 Verification: `zig build test-fixtures -Dsdl2=off`.
 
+### Milestone: `apu-live-playback`
+
+Status: planned.
+
+User-visible outcome: hear channel 2 audio in the SDL2 window.
+
+Bounded deliverable: stream rendered samples through SDL2 audio while the emulator runs.
+
+Acceptance criteria:
+
+- Play the square wave when NR52 enables channel 2.
+- Keep headless WAV tests passing.
+- Document the latency trade-off in the README.
+
+Verification: `zig build test -Dsdl2=off` and manual run with the demo ROM.
+
 ## Known limits
 
 - The core starts at the post-boot state. Boot ROM emulation is out of scope.
 - The PPU has no window line counter edge cases yet.
 - The SDL2 frontend ships without live audio playback.
+- The SDL2 overlay shows registers but does not set breakpoints from the keyboard yet.
 - Only channel 2 has audio output.
 - Save files store external RAM only. The MBC3 real-time clock state is not persisted.
 - Serial links complete at byte boundaries. Bit-level clock timing is not modeled.
