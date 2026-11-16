@@ -26,6 +26,7 @@ const fixtures = [_]Fixture{
     .{ .name = "mbc3", .source = @embedFile("fixtures/asm/mbc3.asm"), .image = @embedFile("fixtures/roms/mbc3.gb") },
     .{ .name = "mbc5", .source = @embedFile("fixtures/asm/mbc5.asm"), .image = @embedFile("fixtures/roms/mbc5.gb") },
     .{ .name = "sram", .source = @embedFile("fixtures/asm/sram.asm"), .image = @embedFile("fixtures/roms/sram.gb") },
+    .{ .name = "window", .source = @embedFile("fixtures/asm/window.asm"), .image = @embedFile("fixtures/roms/window.gb") },
 };
 
 fn fixtureNamed(comptime name: []const u8) Fixture {
@@ -114,6 +115,23 @@ test "joypad button press is visible through FF00" {
 
 test "timer ROM reports PASS" {
     try expectFixturePass(fixtureNamed("timer"));
+}
+
+test "window ROM reports PASS and draws separate window rows" {
+    const ppu = @import("src/ppu.zig");
+    const fixture = fixtureNamed("window");
+    var emulator = try Emulator.init(std.testing.allocator, fixture.image);
+    defer emulator.deinit();
+
+    var frame_index: u32 = 0;
+    while (frame_index < 4) : (frame_index += 1) emulator.runFrame(1 << 24);
+
+    const frame = emulator.bus.ppu.frame;
+    try std.testing.expectEqual(@as(u32, 0xff101010), frame[76 * ppu.ScreenWidth + 80]);
+    try std.testing.expectEqual(@as(u32, 0xfff8f8f0), frame[84 * ppu.ScreenWidth + 80]);
+
+    while (frame_index < 40) : (frame_index += 1) emulator.runFrame(1 << 24);
+    try std.testing.expect(std.mem.indexOf(u8, emulator.serialOutput(), "PASS") != null);
 }
 
 test "banking ROM reports PASS" {

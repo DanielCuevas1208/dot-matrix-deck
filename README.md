@@ -26,7 +26,7 @@ The core splits into small modules with one job each.
 - `src/bus.zig` routes memory between the devices.
 - `src/timer.zig` models divider edges, delayed reloads, and interrupts.
 - `src/apu.zig` models channel 2, a square wave, length, and volume envelope.
-- `src/ppu.zig` renders graphics and exposes scanline modes and STAT edges.
+- `src/ppu.zig` renders graphics, the window layer, scanline modes, and STAT edges.
 - `src/cartridge.zig` loads ROM-only, MBC1, MBC2, MBC3, and MBC5 images.
   It banks memory and drives the MBC3 real-time clock.
   Battery-backed carts keep RAM in a `.sav` file.
@@ -62,6 +62,7 @@ The CPU advances devices in T-cycles.
 The timer counts falling edges from the divider signal.
 An overflow reloads TIMA after four T-cycles.
 The PPU runs modes 2, 3, 0, and 1 across 456 T-cycles.
+The window layer uses an internal line counter when `LY >= WY`.
 STAT requests use rising edges from enabled mode and coincidence sources.
 The APU advances with CPU and DMA cycles.
 The channel frame sequencer clocks length at 256 Hz and envelopes at 64 Hz.
@@ -98,6 +99,7 @@ The release includes evidence for each new hardware path.
 | Battery RAM | Deterministic save-file round-trip |
 | Timer | Divider edges, delayed reload, and IF bit 2 |
 | PPU timing | Scanline modes and STAT edge requests |
+| PPU window | WX/WY placement, internal line counter, and stripe pixels |
 | Serial link | Two ROMs exchange bytes through connected emulator instances |
 | APU channel 2 | Register transitions, duty samples, envelope steps, and WAV output |
 | Debugger | Breakpoint pause, single-step, register report, and SDL2 overlay |
@@ -117,6 +119,30 @@ The SDL2 frontend draws an optional overlay.
 Press **D** to show registers and the current instruction.
 Press **S** to execute one instruction while the overlay is visible.
 Press **P** to pause or resume.
+
+## Window slice
+
+The window layer uses FF4A `WY`, FF4B `WX`, and LCDC bit 5.
+The core draws the window above the background on each visible scanline.
+The internal line counter advances only when `LY >= WY`.
+It resets when the LCD turns on and at the start of each frame.
+
+Run the window fixture.
+
+```text
+zig build run-headless -Dsdl2=off -- fixtures/roms/window.gb --expect pass
+```
+
+Sample output:
+
+```text
+Serial output:
+PASS
+Verdict: pass
+```
+
+The ROM sets `WY=72` and maps two window tile rows.
+Unit tests check dark and light pixels on lines 76 and 84.
 
 ## Requirements
 
@@ -307,7 +333,7 @@ zig build fixtures -Dsdl2=off
 
 Each `.asm` file in `fixtures/asm` becomes a `.gb` image in `fixtures/roms`.
 The round-trip tests keep those images in sync.
-The suite ships eleven ROMs:
+The suite ships twelve ROMs:
 
 - `demo` renders the title and prints PASS.
 - `dma` copies a page into OAM and checks the result.
@@ -319,6 +345,7 @@ The suite ships eleven ROMs:
 - `mbc5` switches MBC5 banks and RAM banks.
 - `sram` enables battery-backed RAM and verifies the save file round-trip.
 - `timer` waits for a TIMA overflow and checks the timer interrupt flag.
+- `window` renders the window layer with `WY=72` and checks serial PASS.
 
 Generate the audio fixture with the headless demo.
 
@@ -351,7 +378,7 @@ Run every bundled ROM through the headless runner.
 zig build test-fixtures -Dsdl2=off
 ```
 
-The current suite reports 178 deterministic tests and 11 bundled ROMs on Zig 0.16.
+The current suite reports 185 deterministic tests and 12 bundled ROMs on Zig 0.16.
 CI repeats the suite on Ubuntu and Windows.
 
 The CI job also regenerates the WAV fixture and checks its committed bytes.
