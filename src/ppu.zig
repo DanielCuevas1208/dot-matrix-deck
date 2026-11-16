@@ -91,6 +91,7 @@ pub const Ppu = struct {
                     self.ly = 0;
                     self.line_cycles = 0;
                     self.mode = 2;
+                    self.window_line = 0;
                     self.updateStatLine();
                 } else if ((old & 0x80) != 0 and (value & 0x80) == 0) {
                     self.ly = 0;
@@ -150,25 +151,45 @@ pub const Ppu = struct {
 
     fn renderLine(self: *Ppu) void {
         const y: usize = self.ly;
+        const window_on_line = (self.lcdc & 0x20) != 0 and self.ly >= self.wy;
         var x: usize = 0;
         while (x < ScreenWidth) : (x += 1) {
             var color: u8 = 0;
             if ((self.lcdc & 1) != 0) {
-                const px: u8 = self.scx +% @as(u8, @intCast(x));
-                const py: u8 = self.scy +% self.ly;
-                const map: usize = if ((self.lcdc & 8) != 0) 0x1c00 else 0x1800;
-                const tile = self.vram[map + @as(usize, py / 8) * 32 + @as(usize, px / 8)];
-                const tile_offset: usize = if ((self.lcdc & 16) != 0) @as(usize, tile) * 16 else @intCast(0x1000 + @as(i16, @as(i8, @bitCast(tile))) * 16);
-                const row: usize = @as(usize, py & 7) * 2;
-                const lo = self.vram[tile_offset + row];
-                const hi = self.vram[tile_offset + row + 1];
-                const bit: u3 = @intCast(7 - (px & 7));
-                color = ((hi >> bit) & 1) * 2 + ((lo >> bit) & 1);
+                color = self.sampleBackgroundPixel(@intCast(x));
+            }
+            if (window_on_line) {
+                if (self.sampleWindowPixel(@intCast(x))) |window_color| color = window_color;
             }
             const palette_index: usize = @intCast((self.bgp >> @intCast(color * 2)) & 3);
             self.frame[y * ScreenWidth + x] = shade[palette_index];
         }
+        if (window_on_line) self.window_line +%= 1;
         if ((self.lcdc & 2) != 0) self.renderSprites();
+    }
+
+    fn sampleBackgroundPixel(self: *const Ppu, x: u8) u8 {
+        const px: u8 = self.scx +% x;
+        const py: u8 = self.scy +% self.ly;
+        return self.sampleTilePixel(if ((self.lcdc & 8) != 0) 0x1c00 else 0x1800, px, py);
+    }
+
+    fn sampleWindowPixel(self: *const Ppu, x: u8) ?u8 {
+        const wx_screen: i16 = @as(i16, self.wx) - 7;
+        const px_i: i16 = @intCast(x);
+        if (px_i < wx_screen) return null;
+        const window_x: u8 = @intCast(px_i - wx_screen);
+        return self.sampleTilePixel(if ((self.lcdc & 0x40) != 0) 0x1c00 else 0x1800, window_x, self.window_line);
+    }
+
+    fn sampleTilePixel(self: *const Ppu, map_base: usize, px: u8, py: u8) u8 {
+        const tile = self.vram[map_base + @as(usize, py / 8) * 32 + @as(usize, px / 8)];
+        const tile_offset: usize = if ((self.lcdc & 16) != 0) @as(usize, tile) * 16 else @intCast(0x1000 + @as(i16, @as(i8, @bitCast(tile))) * 16);
+        const row: usize = @as(usize, py & 7) * 2;
+        const lo = self.vram[tile_offset + row];
+        const hi = self.vram[tile_offset + row + 1];
+        const bit: u3 = @intCast(7 - (px & 7));
+        return @intCast(((hi >> bit) & 1) * 2 + ((lo >> bit) & 1));
     }
 
     fn renderSprites(self: *Ppu) void {
@@ -251,4 +272,68 @@ test "LYC coincidence follows LY and LYC changes" {
     try testing.expectEqual(@as(u8, 0), iflag & 0x02);
     ppu.tick(456, &iflag);
     try testing.expectEqual(@as(u8, 0x02), iflag & 0x02);
+}
+
+test "window line counter increments only on visible window lines" {
+    var ppu = Ppu{};
+    ppu.write(0xff40, 0xa0); // LCD on, window enabled, background off.
+    ppu.write(0xff4a, 10); // WY=10: scanlines 0-9 do not advance the counter.
+
+    ppu.ly = 5;
+    ppu.mode = 0;
+    ppu.renderLine();
+    try testing.expectEqual(@as(u8, 0), ppu.window_line);
+
+    ppu.ly = 10;
+    ppu.renderLine();
+    try testing.expectEqual(@as(u8, 1), ppu.window_line);
+}
+
+test "window line counter resets at frame start and when the LCD turns on" {
+    var ppu = Ppu{};
+    ppu.write(0xff40, 0xa1);
+    ppu.write(0xff4a, 0);
+    ppu.window_line = 7;
+
+    ppu.write(0xff40, 0x00);
+    ppu.write(0xff40, 0xa1);
+    try testing.expectEqual(@as(u8, 0), ppu.window_line);
+
+    ppu.window_line = 5;
+    ppu.ly = 153;
+    ppu.line_cycles = 455;
+    var iflag: u8 = 0;
+    ppu.tick(1, &iflag);
+    try testing.expectEqual(@as(u8, 0), ppu.ly);
+    try testing.expectEqual(@as(u8, 0), ppu.window_line);
+}
+
+test "window layer draws over the background with a separate line counter" {
+    var ppu = Ppu{};
+
+    // Tile 0 is light (color 0). Tile 1 is dark (color 3).
+    ppu.vram[0x10] = 0x00;
+    ppu.vram[0x11] = 0xff;
+    ppu.vram[0x20] = 0xff;
+    ppu.vram[0x21] = 0xff;
+
+    // Window map at $9800: row 0 uses tile 1, row 1 uses tile 0.
+    ppu.vram[0x1800] = 1;
+    ppu.vram[0x1820] = 0;
+
+    ppu.write(0xff40, 0xb1); // LCD, bg, window, unsigned tiles, 9800 maps.
+    ppu.write(0xff4a, 0);
+    ppu.write(0xff4b, 7);
+
+    // Line 4 uses window line 0 and draws a dark pixel from map row 0.
+    ppu.ly = 4;
+    ppu.mode = 0;
+    ppu.renderLine();
+    try testing.expectEqual(@as(u32, 0xff101010), ppu.frame[4 * ScreenWidth + 4]);
+
+    // Line 12 uses window line 8 and draws a light pixel from map row 1.
+    ppu.ly = 12;
+    ppu.window_line = 8;
+    ppu.renderLine();
+    try testing.expectEqual(@as(u32, 0xfff8f8f0), ppu.frame[12 * ScreenWidth + 4]);
 }

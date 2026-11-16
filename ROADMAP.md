@@ -130,23 +130,37 @@ Acceptance criteria:
 - `zig build test -Dsdl2=off` checks 178 deterministic tests.
 - `zig build run-debugger-demo -Dsdl2=off` pauses at `$0150` and resumes to PASS.
 
-## Future milestones
+## Release 0.7: window slice
+
+Status: complete.
 
 ### Milestone: `ppu-window-edge-cases`
 
-Status: planned.
+User-visible outcome: render the Game Boy window layer with the correct internal line counter.
 
-User-visible outcome: render window layers with correct line-counter edge behavior.
-
-Bounded deliverable: model window line progression and add a focused ROM fixture.
+Bounded deliverable: model window pixels, line progression, and a bundled ROM fixture.
 
 Acceptance criteria:
 
 - Increment the window line only when the window draws a visible line.
-- Reset the line counter at frame start.
-- Verify the result with a bundled headless ROM.
+- Reset the line counter at frame start and when the LCD turns on.
+- Verify the result with a bundled headless ROM and pixel checks.
 
-Verification: `zig build test-fixtures -Dsdl2=off`.
+### Done
+
+- Render the window above the background using WX, WY, and the LCDC window map bit.
+- Advance `window_line` only when `LY >= WY` and the window is enabled.
+- Reset `window_line` at frame start and when the LCD powers on.
+- Added `fixtures/asm/window.asm` with a `WY=72` stripe layout.
+- Added PPU unit tests and a fixture integration test for window pixels.
+
+### Release evidence
+
+- `zig build test -Dsdl2=off` checks 185 deterministic tests.
+- `zig build test-fixtures -Dsdl2=off` runs twelve bundled ROMs.
+- `zig build run-headless -Dsdl2=off -- fixtures/roms/window.gb --expect pass` checks serial PASS.
+
+## Future milestones
 
 ### Milestone: `apu-live-playback`
 
@@ -164,10 +178,25 @@ Acceptance criteria:
 
 Verification: `zig build test -Dsdl2=off` and manual run with the demo ROM.
 
+### Milestone: `debugger-overlay-breakpoints`
+
+Status: planned.
+
+User-visible outcome: set and clear address breakpoints from the SDL2 overlay.
+
+Bounded deliverable: wire keyboard input to the debugger module while the overlay is visible.
+
+Acceptance criteria:
+
+- Add a breakpoint at the current PC from the overlay.
+- Remove the newest breakpoint with a second key.
+- Keep headless debugger tests passing.
+
+Verification: `zig build test -Dsdl2=off` and `zig build run-debugger-demo -Dsdl2=off`.
+
 ## Known limits
 
 - The core starts at the post-boot state. Boot ROM emulation is out of scope.
-- The PPU has no window line counter edge cases yet.
 - The SDL2 frontend ships without live audio playback.
 - The SDL2 overlay shows registers but does not set breakpoints from the keyboard yet.
 - Only channel 2 has audio output.

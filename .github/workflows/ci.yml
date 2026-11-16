@@ -51,6 +51,8 @@ jobs:
         run: zig build run-headless -Dsdl2=off --global-cache-dir .zig-global-cache -- fixtures/roms/joypad.gb --expect pass
       - name: Timer ROM reports PASS
         run: zig build run-headless -Dsdl2=off --global-cache-dir .zig-global-cache -- fixtures/roms/timer.gb --expect pass
+      - name: Window ROM reports PASS
+        run: zig build run-headless -Dsdl2=off --global-cache-dir .zig-global-cache -- fixtures/roms/window.gb --expect pass
       - name: Battery RAM save round-trip
         run: |
           zig build run-headless -Dsdl2=off --global-cache-dir .zig-global-cache -- fixtures/roms/sram.gb --save sram.sav
